@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "profiles": {
     "full": {
-      "maxListBytes": 78000,
-      "wireResultSha256": "9158761f9f6788106395d2d905cbf7224ee161bf24bb100b10a77e1c9c2708c1",
+      "maxListBytes": 80000,
+      "wireResultSha256": "a8fa9eeef02f0705152dfd1d443cf16a0ad5c42bd048d7d0d98ab09b5867cbc3",
       "instructionSha256": "f18849bb1ea62bcf5a1e46a73d633c787b4e08e763cc04b01c4e557df8f833eb",
       "toolNames": [
         "browser_open",

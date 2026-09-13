@@ -48,13 +48,13 @@ import { replayBlockedReason, replayTrace, type ReplayResult } from './replayRun
 
 const BROWSER_REPLAY_SHAPE = {
   action: z
-    .enum(['list', 'save', 'run', 'forget', 'promote', 'demote'])
+    .enum(['list', 'save', 'run', 'forget', 'promote', 'demote', 'note'])
     .describe(
       'list: recorded flows for this workspace. save: name the actions you just ' +
         'performed. run: replay a saved flow without reading a snapshot. forget: delete one. ' +
         'promote: keep a proven flow permanently and have it offered whenever you land on its ' +
         'page — this stores its typed values in plain text indefinitely, so variable-ise any ' +
-        'sensitive one first. demote: undo a promote.',
+        'sensitive one first. demote: undo a promote. note: remember one line about this site.',
     ),
   name: z
     .string()
@@ -70,6 +70,11 @@ const BROWSER_REPLAY_SHAPE = {
     .record(z.string(), z.string())
     .optional()
     .describe('run: values for the {{placeholders}} the flow was saved with.'),
+  note: z
+    .string()
+    .max(200)
+    .optional()
+    .describe('note: the line to remember.'),
   surfaceId: z
     .string()
     .optional()
@@ -186,7 +191,7 @@ export function createReplayToolCatalog(deps: BrowserToolDeps) {
       'mints no accessibility refs, and a flow recorded then saves but can never run.',
     inputSchema: BROWSER_REPLAY_SHAPE,
     profiles: ['full'],
-    invoke: async ({ action, name, steps, variables, surfaceId }) => {
+    invoke: async ({ action, name, steps, variables, note, surfaceId }) => {
       const nameError = () =>
         text(
           `browser_replay ${action} needs a name (letters, digits, and " _.:-", up to 64 characters).`,
@@ -201,6 +206,20 @@ export function createReplayToolCatalog(deps: BrowserToolDeps) {
       // needs to demote a flow is when the session that recorded it has died
       // — a lease there would refuse exactly the call that fixes the problem.
       // Scope is still resolved, so the workspace boundary is unchanged.
+      // note runs outside the lease too, and for a stronger reason than
+      // promote/demote: it needs no page at all, only the host the surface is
+      // on. Sending it down the getPageForScope gate would refuse the call on
+      // every backend that mints no Playwright Page, which is most of the
+      // moments an agent actually has something worth writing down.
+      if (action === 'note') {
+        try {
+          const scope = await requireBrowserTargetScope(deps, surfaceId);
+          return await noteSite(scope, note);
+        } catch (error) {
+          return text(describeToolError(error), true);
+        }
+      }
+
       if (action === 'promote' || action === 'demote') {
         try {
           if (!isValidTraceName(name)) return nameError();
@@ -235,6 +254,66 @@ export function createReplayToolCatalog(deps: BrowserToolDeps) {
       });
     },
   });
+
+  /**
+   * The host this surface is currently on, or null.
+   *
+   * Read from the control plane (browser.tabs) rather than from page JS or a
+   * Playwright Page: the note needs only a host, and both of the alternatives
+   * would make writing one depend on a live automation target.
+   */
+  async function landedHost(scope: BrowserTargetScope): Promise<string | null> {
+    const res = await sendScopedBrowserRpc<{
+      ok?: boolean;
+      action?: string;
+      tabs?: Array<{ surfaceId?: string; url?: string; selected?: boolean }>;
+    }>('browser.tabs', scope, { action: 'list' }).catch(() => null);
+    const tabs = res?.tabs ?? [];
+    if (tabs.length === 0) return null;
+    const tab = scope.surfaceId
+      ? tabs.filter((t) => t.surfaceId === scope.surfaceId)[0]
+      : (tabs.filter((t) => t.selected)[0] ?? tabs[tabs.length - 1]);
+    return domainFromUrl(tab?.url ?? '');
+  }
+
+  /**
+   * Write one agent-authored line against the site the surface is on.
+   *
+   * The domain is NOT a parameter. An agent that has to name the site can name
+   * the wrong one, and the only site whose memory it has standing to write is
+   * the one it is looking at.
+   */
+  async function noteSite(scope: BrowserTargetScope, note: string | undefined) {
+    const body = (note ?? '').trim();
+    if (!body) {
+      return text('browser_replay note needs a note: one line, up to 200 characters.', true);
+    }
+    const domain = await landedHost(scope);
+    if (!domain) {
+      return text(
+        'browser_replay note could not tell which site you are on. Navigate to the page ' +
+          'you want to remember something about, then write the note.',
+        true,
+      );
+    }
+    const res = await sendScopedBrowserRpc<{ ok?: boolean; skipped?: boolean; reason?: string }>(
+      'browser.siteMemory.record',
+      scope,
+      { domain, kind: 'note', note: body },
+    );
+    if (res?.skipped) return text('Per-site memory is turned off, so the note was not kept.');
+    if (!res?.ok) {
+      // The refusal reason is a PATTERN NAME, never the text that was refused.
+      return text(
+        res?.reason
+          ? `The note was refused: it looks like it carries a ${res.reason}. ` +
+              'Write it without the value.'
+          : 'The note could not be stored.',
+        true,
+      );
+    }
+    return text(`Noted for ${domain}. It will be mentioned the next time you land there.`);
+  }
 
   async function promoteTrace(scope: BrowserTargetScope, name: string) {
     const res = await sendScopedBrowserRpc<{ ok: boolean; reason?: string; record?: PromotedRecord }>(
