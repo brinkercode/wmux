@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import type { z } from 'zod';
+import { toolInputSchema } from '../../toolCatalog';
 import {
   expectCommanderCatalogLockstep,
   expectCoreCatalogLockstep,
@@ -31,6 +33,47 @@ describe('repl tool catalog', () => {
       // commander: still out — the brain drives workers, it does not execute.
       expect(spec.profiles).toEqual(['full', 'core']);
     }
+  });
+
+  it('rejects an unknown option and names the ones that would have worked', () => {
+    for (const spec of catalog) expect(spec.strictInput).toBe(true);
+
+    // A dropped `timeoutMs` would have run under the default timeout and read
+    // back exactly like a run that honoured the caller's number.
+    const run = (toolInputSchema(catalog[0]) as z.ZodObject).safeParse({
+      code: '1',
+      timeoutMs: 500,
+    });
+    expect(run.success).toBe(false);
+    expect(run.error?.issues[0]?.message).toBe(
+      'unknown option "timeoutMs"; valid: code, session, timeout, cwd',
+    );
+
+    const reset = (toolInputSchema(catalog[1]) as z.ZodObject).safeParse({
+      sessionName: 'a',
+    });
+    expect(reset.error?.issues[0]?.message).toBe(
+      'unknown option "sessionName"; valid: session',
+    );
+
+    const sessions = (toolInputSchema(catalog[2]) as z.ZodObject).safeParse({
+      session: 'a',
+    });
+    expect(sessions.error?.issues[0]?.message).toBe(
+      'unknown option "session"; this tool takes no options',
+    );
+  });
+
+  it('leaves the documented options working', () => {
+    const run = toolInputSchema(catalog[0]) as z.ZodObject;
+    expect(run.safeParse({ code: '1 + 1' }).success).toBe(true);
+    expect(
+      run.safeParse({ code: '1 + 1', session: 'a', timeout: 500, cwd: '/tmp' }).success,
+    ).toBe(true);
+    const reset = toolInputSchema(catalog[1]) as z.ZodObject;
+    expect(reset.safeParse({ session: 'a' }).success).toBe(true);
+    const sessions = toolInputSchema(catalog[2]) as z.ZodObject;
+    expect(sessions.safeParse({}).success).toBe(true);
   });
 
   it('tells the caller the runtime is unsandboxed and connection-scoped', () => {

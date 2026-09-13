@@ -142,6 +142,7 @@ export function createReplToolCatalog(): readonly WmuxToolSpec[] {
             "server's cwd, which is not necessarily your pane's — pass it explicitly.",
         ),
     },
+    strictInput: true,
     profiles: ['full', 'core'],
     invoke: async ({ code, session, timeout, cwd }) => {
       const name = session ?? DEFAULT_SESSION_NAME;
@@ -194,6 +195,7 @@ export function createReplToolCatalog(): readonly WmuxToolSpec[] {
         .optional()
         .describe(`Session name; defaults to "${DEFAULT_SESSION_NAME}".`),
     },
+    strictInput: true,
     profiles: ['full', 'core'],
     invoke: ({ session }) => {
       const name = session ?? DEFAULT_SESSION_NAME;
@@ -213,6 +215,7 @@ export function createReplToolCatalog(): readonly WmuxToolSpec[] {
     name: 'repl_sessions',
     description: REPL_SESSIONS_DESCRIPTION,
     inputSchema: {},
+    strictInput: true,
     profiles: ['full', 'core'],
     invoke: () => {
       const sessions = getReplRegistry().list();

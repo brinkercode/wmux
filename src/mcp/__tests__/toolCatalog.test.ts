@@ -4,6 +4,7 @@ import {
   defineWmuxTool,
   registerWmuxTools,
   selectWmuxTools,
+  toolInputSchema,
   type WmuxOperationContext,
   type WmuxToolProfile,
   type WmuxToolSpec,
@@ -141,6 +142,60 @@ describe('typed wmux tool catalog', () => {
       content: [{ type: 'text', text: 'ok:unattributed:true:true' }],
     });
     expect(Object.isFrozen(registered)).toBe(true);
+  });
+
+  it('registers a strictInput tool with a schema that names the unknown key and the valid ones', () => {
+    const spec = defineWmuxTool({
+      name: 'strict_tool',
+      description: 'Strict tool',
+      inputSchema: {
+        value: z.string(),
+        count: z.number().optional(),
+      },
+      strictInput: true,
+      profiles: ['full'],
+      invoke: async (input) => ({
+        content: [{ type: 'text', text: input.value }],
+      }),
+    });
+    const schema = toolInputSchema(spec);
+    expect(schema).toBeInstanceOf(z.ZodObject);
+
+    const rejected = (schema as z.ZodObject).safeParse({ value: 'a', valeu: 'b' });
+    expect(rejected.success).toBe(false);
+    expect(rejected.error?.issues[0]?.message).toBe(
+      'unknown option "valeu"; valid: value, count',
+    );
+
+    // Known keys keep their exact meaning, optional ones included.
+    expect((schema as z.ZodObject).safeParse({ value: 'a', count: 2 })).toEqual({
+      success: true,
+      data: { value: 'a', count: 2 },
+    });
+    // A wrong type still reads as a type error, not an unknown option.
+    const typeError = (schema as z.ZodObject).safeParse({ value: 1 });
+    expect(typeError.error?.issues[0]?.message).toContain('expected string');
+  });
+
+  it('tells a no-option tool apart from one whose options were all misspelled', () => {
+    const spec = defineWmuxTool({
+      name: 'no_option_tool',
+      description: 'No option tool',
+      inputSchema: {},
+      strictInput: true,
+      profiles: ['full'],
+      invoke: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
+    });
+    const schema = toolInputSchema(spec) as z.ZodObject;
+    expect(schema.safeParse({}).success).toBe(true);
+    expect(schema.safeParse({ session: 'x' }).error?.issues[0]?.message).toBe(
+      'unknown option "session"; this tool takes no options',
+    );
+  });
+
+  it('leaves a tool that did not opt in on the SDK default raw shape', () => {
+    const spec = makeTool('lenient_tool');
+    expect(toolInputSchema(spec)).toBe(spec.inputSchema);
   });
 
   it('preserves literal names and exact Zod input inference at the authoring boundary', () => {

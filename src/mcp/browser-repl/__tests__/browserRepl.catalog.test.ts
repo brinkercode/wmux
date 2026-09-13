@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import type { z } from 'zod';
+import { toolInputSchema } from '../../toolCatalog';
 import {
   expectCommanderCatalogLockstep,
   expectCoreCatalogLockstep,
@@ -28,6 +30,22 @@ describe('browser_repl catalog', () => {
     expect(BROWSER_REPL_TOOLS).not.toContain('evaluate');
     expect(BROWSER_REPL_TOOLS).not.toContain('screenshot');
     expect(BROWSER_REPL_TOOLS).not.toContain('replay');
+  });
+
+  it('rejects an unknown option and names the ones that would have worked', () => {
+    expect(catalog[0].strictInput).toBe(true);
+    const schema = toolInputSchema(catalog[0]) as z.ZodObject;
+    // Silently dropping this used to run the snippet under the default
+    // timeout, which reads exactly like a snippet that never timed out.
+    const result = schema.safeParse({ code: '1', timeoutMs: 500 });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toBe(
+      'unknown option "timeoutMs"; valid: code, timeout, surfaceId',
+    );
+    expect(schema.safeParse({ code: '1' }).success).toBe(true);
+    expect(
+      schema.safeParse({ code: '1', timeout: 500, surfaceId: 's1' }).success,
+    ).toBe(true);
   });
 
   it('stays under the tools/list budget it was squeezed into', () => {

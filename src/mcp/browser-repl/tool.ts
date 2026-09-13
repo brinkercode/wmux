@@ -211,6 +211,7 @@ export function createBrowserReplCatalog(
         .optional()
         .describe('Default surfaceId for every browser.* call in this snippet.'),
     },
+    strictInput: true,
     profiles: ['full'],
     invoke: async ({ code, timeout, surfaceId }) => {
       // Captured HERE, inside the MCP dispatch, and re-entered per call: the
