@@ -35,12 +35,24 @@ import {
   type CaptureWindow,
   type ConsoleEntry,
 } from '../pageCapture';
+import { MAX_SCREENSHOT_BASE64_BYTES } from '../../resultCap';
 
 // Optional surfaceId schema reused across tools
 const optionalSurfaceId = z
   .string()
   .optional()
   .describe('Omit for the active surface.');
+
+// Per-call text-result cap, honoured by the dispatch-layer guard
+// (src/mcp/resultCap.ts). Tools whose output size the caller does not control
+// (a console ring, a network log, an arbitrary JSON.stringify) accept this so
+// a legitimate need for more than the 64 KiB default is one parameter away.
+// Plain z.number(): the guard floors and clamps the value itself (every zod
+// numeric modifier costs bytes in tools/list).
+const maxBytesParam = z
+  .number()
+  .optional()
+  .describe('Cap the text result in bytes (default 65536, max 524288).');
 
 // Module-scope parameter shapes: hoisted out of the per-registration path so
 // every createWmuxServer() instance shares one set of zod schema objects.
@@ -92,6 +104,7 @@ const BROWSER_EVALUATE_SHAPE = {
     .optional()
     .describe("Run in the page's own JS world to reach its globals (e.g. window.__NEXT_DATA__). Default false."),
   surfaceId: optionalSurfaceId,
+  maxBytes: maxBytesParam,
 };
 
 const BROWSER_CONSOLE_SHAPE = {
@@ -104,6 +117,7 @@ const BROWSER_CONSOLE_SHAPE = {
     .optional()
     .describe('Clear after returning.'),
   surfaceId: optionalSurfaceId,
+  maxBytes: maxBytesParam,
 };
 
 const BROWSER_NETWORK_SHAPE = {
@@ -116,6 +130,7 @@ const BROWSER_NETWORK_SHAPE = {
     .optional()
     .describe('Clear requests and retained response bodies after returning.'),
   surfaceId: optionalSurfaceId,
+  maxBytes: maxBytesParam,
 };
 
 const BROWSER_RESPONSE_BODY_SHAPE = {
@@ -123,6 +138,7 @@ const BROWSER_RESPONSE_BODY_SHAPE = {
     .string()
     .describe('URL glob, e.g. "*api/users*".'),
   surfaceId: optionalSurfaceId,
+  maxBytes: maxBytesParam,
 };
 
 const BROWSER_HIGHLIGHT_SHAPE = {
@@ -478,6 +494,32 @@ export function registerInspectionTools(server: McpServer, deps: BrowserToolDeps
     return typeof value === 'number' && value > 0 ? value : null;
   };
 
+  /**
+   * Size ceiling for the base64 image payload. Over the ceiling the tool
+   * REFUSES with guidance rather than downscaling: the text part promises a
+   * coordinate basis (devicePixelRatio, fullPage vs viewport) and a silently
+   * rescaled image would break that contract — clicks computed from its
+   * pixels would land in the wrong place. Refusal keeps the failure honest
+   * and hands the caller the scoped alternatives.
+   */
+  const oversizedScreenshot = (
+    base64: string,
+    hint: string,
+  ): { content: { type: 'text'; text: string }[]; isError: true } | null => {
+    if (base64.length <= MAX_SCREENSHOT_BASE64_BYTES) return null;
+    const mib = (base64.length / (1024 * 1024)).toFixed(1);
+    const ceilingMiB = MAX_SCREENSHOT_BASE64_BYTES / (1024 * 1024);
+    return {
+      content: [{
+        type: 'text' as const,
+        text:
+          `browser_screenshot refused: the PNG encodes to ${mib} MiB of base64, over the ` +
+          `${ceilingMiB} MiB ceiling. ${hint}`,
+      }],
+      isError: true,
+    };
+  };
+
   server.tool(
     'browser_screenshot',
     'Screenshot the page or one element as a base64-encoded PNG. Requires browser_open first, even if a browser panel is already visible.',
@@ -493,9 +535,15 @@ export function registerInspectionTools(server: McpServer, deps: BrowserToolDeps
             // between the two would otherwise mislabel the image.
             const dpr = fullPage ? null : await readDpr(page);
             const buf = await page.screenshot({ ...(fullPage && { fullPage: true }), type: 'png' });
+            const data = buf.toString('base64');
+            const refused = oversizedScreenshot(
+              data,
+              'Use a viewport screenshot (omit fullPage), scope to an element with ref, or narrow the page.',
+            );
+            if (refused) return refused;
             return {
               content: [
-                { type: 'image' as const, data: buf.toString('base64'), mimeType: 'image/png' },
+                { type: 'image' as const, data, mimeType: 'image/png' },
                 {
                   type: 'text' as const,
                   text: coordinateBasis(fullPage ? 'fullPage' : 'viewport', dpr),
@@ -513,9 +561,15 @@ export function registerInspectionTools(server: McpServer, deps: BrowserToolDeps
               throw new Error(`Could not resolve ref="${ref}" to an element.`);
             }
             const buffer = (await el.screenshot()) as Buffer;
+            const elementData = buffer.toString('base64');
+            const elementRefused = oversizedScreenshot(
+              elementData,
+              'Scope to a smaller element, or take a viewport screenshot (omit ref).',
+            );
+            if (elementRefused) return elementRefused;
             return {
               content: [
-                { type: 'image' as const, data: buffer.toString('base64'), mimeType: 'image/png' as const },
+                { type: 'image' as const, data: elementData, mimeType: 'image/png' as const },
                 { type: 'text' as const, text: coordinateBasis('element', null) },
               ],
             };
@@ -526,6 +580,12 @@ export function registerInspectionTools(server: McpServer, deps: BrowserToolDeps
         const result = await sendScopedBrowserRpc<{ data: string }>('browser.screenshot', scope, {
           ...(fullPage && { fullPage }),
         });
+
+        const rpcRefused = oversizedScreenshot(
+          result.data,
+          'Use a viewport screenshot (omit fullPage), scope to an element with ref, or narrow the page.',
+        );
+        if (rpcRefused) return rpcRefused;
 
         return {
           content: [

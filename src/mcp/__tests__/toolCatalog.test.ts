@@ -144,6 +144,57 @@ describe('typed wmux tool catalog', () => {
     expect(Object.isFrozen(registered)).toBe(true);
   });
 
+  it('caps oversized TEXT results through the dispatch-layer guard, images untouched', async () => {
+    // registerWmuxTools wraps every spec.invoke with the shared result guard
+    // (src/mcp/resultCap.ts): an oversized text block is cut head+tail with the
+    // raise-path marker, and image content rides through unbounded.
+    const registrations: Array<{
+      name: string;
+      handler: (input: Record<string, unknown>) => Promise<unknown>;
+    }> = [];
+    const server = {
+      registerTool: (
+        name: string,
+        _config: Record<string, unknown>,
+        handler: (input: Record<string, unknown>) => Promise<unknown>,
+      ) => {
+        registrations.push({ name, handler });
+        return { name };
+      },
+    };
+    const imageData = 'A'.repeat(3 * 1024 * 1024);
+    const chatty = defineWmuxTool({
+      name: 'chatty_tool',
+      description: 'Chatty tool',
+      inputSchema: { value: z.string() },
+      profiles: ['full'],
+      invoke: async () =>
+        ({
+          content: [
+            { type: 'image', data: imageData, mimeType: 'image/png' },
+            { type: 'text', text: 'x'.repeat(200_000) },
+          ],
+        }) as never,
+    });
+
+    registerWmuxTools(server as never, [chatty], {
+      profile: 'full',
+      context: { principal: { kind: 'unattributed' } },
+    });
+
+    const result = (await registrations[0]?.handler({ value: 'a' })) as {
+      content: { type: string; text?: string; data?: string }[];
+    };
+    expect(result.content[0]).toEqual({
+      type: 'image',
+      data: imageData,
+      mimeType: 'image/png',
+    });
+    expect(result.content[1]?.text).toMatch(
+      /\[truncated: 65536 of 200000 bytes shown; pass maxBytes to raise, up to 512 KiB\]/,
+    );
+  });
+
   it('registers a strictInput tool with a schema that names the unknown key and the valid ones', () => {
     const spec = defineWmuxTool({
       name: 'strict_tool',

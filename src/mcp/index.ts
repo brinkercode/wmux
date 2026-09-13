@@ -33,6 +33,7 @@ import { registerWorktaskTools } from './worktask';
 import { registerGitTools } from './git';
 import { registerPaneLifecycleTools } from './paneLifecycle';
 import { registerReplTools } from './repl/tools';
+import { wrapHandlerWithResultCap } from './resultCap';
 import { getWmuxMcpServerInstructions, resolveMcpServerVersion } from './serverMetadata';
 import { unlistToolsFromListing } from './listFilter';
 import { UNLISTED_TOOLS_SET } from '../shared/unlistedTools';
@@ -73,6 +74,19 @@ export interface WmuxServerCtx {
 // Hoisted to module scope so the shapes below (and every server instance that
 // shares them) can reference it.
 const DEFAULT_READ_TAIL_LINES = 300;
+// Hard ceiling for terminal_read's tail_lines, matching the scrollback window
+// wmux_search_panes already documents (20k lines). Clamped in the handler, not
+// the schema, so an over-limit request is served at the ceiling rather than
+// rejected.
+const MAX_READ_TAIL_LINES = 20_000;
+// Shared per-call text-result cap input. A tool that includes this in its
+// shape lets the caller raise (or lower) the 64 KiB default result cap up to
+// the 512 KiB hard maximum; the dispatch-layer guard floors and clamps the
+// value itself (every zod numeric modifier costs bytes in tools/list).
+const maxBytesParam = z
+  .number()
+  .optional()
+  .describe('Cap the text result in bytes (default 65536, max 524288).');
 
 // ── Module-scope tool parameter shapes ──────────────────────────────────────
 // Hoisted out of the per-registration path (createWmuxServer) so that N broker
@@ -95,13 +109,14 @@ const BROWSER_SESSION_START_SHAPE = {
 
 const TERMINAL_READ_SHAPE = {
   ptyId: z.string().optional().describe('Target a specific terminal by PTY ID (surface_list()). Omit for the active terminal.'),
-  tail_lines: z.number().int().positive().optional().describe(`Return only the last N lines. Omit for the default (${DEFAULT_READ_TAIL_LINES}). Read cost is O(N), so a small N is both cheaper and fewer tokens.`),
+  tail_lines: z.number().int().positive().optional().describe(`Return only the last N lines. Omit for the default (${DEFAULT_READ_TAIL_LINES}). Capped at 20000. Read cost is O(N), so a small N is both cheaper and fewer tokens.`),
   full_scrollback: z.boolean().optional().describe('Return the ENTIRE terminal backlog (up to the scrollback limit, ~10k lines) instead of a bounded tail. Expensive — walks the whole buffer. Use only when the recent tail is genuinely insufficient.'),
+  maxBytes: maxBytesParam,
 };
 
 const TERMINAL_READ_EVENTS_SHAPE = {
   ptyId: z.string().optional().describe('Target a specific terminal by PTY ID. Omit to use the active terminal.'),
-  limit: z.number().int().positive().optional().describe('Return the N most recent events (default 32). Ignored when sinceOffset or lastCommandOnly is set.'),
+  limit: z.number().int().positive().optional().describe('Return the N most recent events (default 32, capped at 1024). Ignored when sinceOffset or lastCommandOnly is set.'),
   sinceOffset: z.number().int().nonnegative().optional().describe('Return only events whose byteOffset is strictly greater than this value — for diff-style polling.'),
   lastCommandOnly: z.boolean().optional().describe('Skip the events list and only return lastCompletedRange (the byte-offset range + exit code of the most recently finished command).'),
 };
@@ -460,6 +475,39 @@ const server = new McpServer({
 }, {
   instructions: getWmuxMcpServerInstructions(SURFACE_PROFILE),
 });
+
+// ── Result-size guard, legacy lane ───────────────────────────────────────────
+// The catalog lane (registerWmuxTools) caps its own tools; most tools here are
+// still registered through the legacy server.tool() overloads, which do NOT
+// route through registerWmuxTools. Wrapping both registration methods on the
+// instance — before ANY registration, including the surface-filter patch below
+// (which captures server.tool at patch time) and the collectingServer view
+// (which delegates to these same properties at call time) — puts every tool on
+// this server behind the shared text cap. See src/mcp/resultCap.ts.
+{
+  const rawTool = server.tool.bind(server);
+  const rawRegisterTool = server.registerTool.bind(server);
+  // server.tool(): the callback is always the LAST argument across overloads.
+  (server as { tool: typeof server.tool }).tool = ((name: string, ...rest: unknown[]) => {
+    const last = rest[rest.length - 1];
+    if (typeof last === 'function') {
+      rest[rest.length - 1] = wrapHandlerWithResultCap(last as (...a: unknown[]) => unknown);
+    }
+    return (rawTool as (...a: unknown[]) => ReturnType<typeof rawTool>)(name, ...rest);
+  }) as typeof server.tool;
+  (server as { registerTool: typeof server.registerTool }).registerTool = ((
+    name: Parameters<typeof rawRegisterTool>[0],
+    config: Parameters<typeof rawRegisterTool>[1],
+    cb: Parameters<typeof rawRegisterTool>[2],
+  ) =>
+    rawRegisterTool(
+      name,
+      config,
+      typeof cb === 'function'
+        ? (wrapHandlerWithResultCap(cb as (...a: unknown[]) => unknown) as typeof cb)
+        : cb,
+    )) as typeof server.registerTool;
+}
 
 const MCP_CATALOG_OPTIONS: RegisterWmuxToolsOptions = Object.freeze({
   profile: SURFACE_PROFILE,
@@ -1087,7 +1135,8 @@ server.tool(
     const route = await resolveTerminalRouteBound(ptyId);
     const params: Record<string, unknown> = { workspaceId: route.workspaceId };
     if (route.ptyId) params.ptyId = route.ptyId;
-    if (tail_lines !== undefined) params.tail_lines = tail_lines;
+    // Clamp, not reject: an over-limit request is served at the ceiling.
+    if (tail_lines !== undefined) params.tail_lines = Math.min(tail_lines, MAX_READ_TAIL_LINES);
     if (full_scrollback) params.full_scrollback = true;
     return callRpc('input.readScreen', params);
   },
@@ -1101,7 +1150,8 @@ server.tool(
     const route = await resolveTerminalRouteBound(ptyId);
     const params: Record<string, unknown> = { workspaceId: route.workspaceId };
     if (route.ptyId) params.ptyId = route.ptyId;
-    if (limit !== undefined) params.limit = limit;
+    // Clamp, not reject: an over-limit request is served at the ceiling.
+    if (limit !== undefined) params.limit = Math.min(limit, 1024);
     if (sinceOffset !== undefined) params.sinceOffset = sinceOffset;
     if (lastCommandOnly) params.lastCommandOnly = true;
     return callRpc('terminal.readEvents', params);
@@ -1372,7 +1422,9 @@ server.tool(
     const workspaceId = await requireWorkspaceId();
     const params: Record<string, unknown> = { workspaceId, query };
     if (regex !== undefined) params.regex = regex;
-    if (searchTailLines !== undefined) params.searchTailLines = searchTailLines;
+    // The description already promises a 20000-line ceiling; enforce it here
+    // (clamp, not reject) instead of trusting the caller with the buffer walk.
+    if (searchTailLines !== undefined) params.searchTailLines = Math.min(searchTailLines, 20_000);
     return callRpc('pane.search', params);
   },
 );

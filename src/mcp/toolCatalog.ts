@@ -4,6 +4,7 @@ import type {
 } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { wrapHandlerWithResultCap } from './resultCap';
 
 /**
  * Launch-time tool surfaces. A server instance selects exactly one profile and
@@ -208,7 +209,15 @@ export function registerWmuxTools(
           description: spec.description,
           inputSchema: toolInputSchema(spec),
         },
-        (input: Record<string, unknown>) => spec.invoke(input, context),
+        // Result-size guard (src/mcp/resultCap.ts): every catalog tool's TEXT
+        // result is capped at 64 KiB head+tail unless the tool's input schema
+        // declares a `maxBytes` the caller set. Idempotent, so the legacy-lane
+        // wrapper in createWmuxServer (which also covers server.tool()
+        // registrations) can wrap the same handler again as a no-op.
+        (input: Record<string, unknown>) =>
+          wrapHandlerWithResultCap(
+            (parsed: Record<string, unknown>) => spec.invoke(parsed, context),
+          )(input),
       ),
     ),
   );

@@ -17,13 +17,29 @@ const optionalSurfaceId = z
   .optional()
   .describe('Omit for the active surface.');
 
+// Per-call text-result cap, honoured by the dispatch-layer guard
+// (src/mcp/resultCap.ts) on tools whose output size the caller does not
+// directly control. Plain z.number(): the guard floors and clamps the value
+// itself (every zod numeric modifier costs bytes in tools/list).
+const maxBytesParam = z
+  .number()
+  .optional()
+  .describe('Cap the text result in bytes (default 65536, max 524288).');
+
+// Upper bounds for the caller-set extraction sizes. Clamped in the handlers,
+// not the schema, so an over-limit request is served at the ceiling rather
+// than rejected. maxContentLength matches the diff-baseline cost of one
+// listing; maxLength matches the 512 KiB result cap the guard can enforce.
+const MAX_SMART_CONTENT_CHARS = 100_000;
+const MAX_EXTRACT_TEXT_CHARS = 524_288;
+
 // Module-scope parameter shapes: hoisted out of the per-registration path so
 // every createWmuxServer() instance shares one set of zod schema objects.
 const BROWSER_SMART_SNAPSHOT_SHAPE = {
   maxContentLength: z
     .number()
     .optional()
-    .describe('Content summary cap in characters (default 3000).'),
+    .describe('Content summary cap in characters (default 3000, max 100000).'),
   full: z.boolean().optional().describe('Force the complete tree instead of a diff.'),
   surfaceId: optionalSurfaceId,
 };
@@ -36,12 +52,13 @@ const BROWSER_EXTRACT_TEXT_SHAPE = {
   maxLength: z
     .number()
     .optional()
-    .describe('Character cap on the markdown.'),
+    .describe('Character cap on the markdown (max 524288).'),
   includeLinks: z
     .boolean()
     .optional()
     .describe('Preserve hyperlinks (default false).'),
   surfaceId: optionalSurfaceId,
+  maxBytes: maxBytesParam,
 };
 
 const BROWSER_EXTRACT_DATA_SHAPE = {
@@ -52,6 +69,7 @@ const BROWSER_EXTRACT_DATA_SHAPE = {
     .record(z.string(), z.string())
     .describe('Field name to expected type, e.g. { name: "string", price: "number" }.'),
   surfaceId: optionalSurfaceId,
+  maxBytes: maxBytesParam,
 };
 
 /**
@@ -78,7 +96,8 @@ export function registerExtractionTools(server: McpServer, deps: BrowserToolDeps
         // available (packaged builds, issue #105) fall back to a DOM-based
         // snapshot over the RPC channel.
         const page = await engine.getPageForScope(scope).catch(allowScopedRpcFallback);
-        const capLength = maxContentLength ?? 3000;
+        // Clamp, not reject: an over-limit cap is served at the ceiling.
+        const capLength = Math.min(maxContentLength ?? 3000, MAX_SMART_CONTENT_CHARS);
         const snapshot = page
           ? await getSmartSnapshot(page, { maxContentLength: capLength, surfaceId: scope.surfaceId })
           : await getSmartSnapshotViaEval(rpcEvaluator(scope), {
@@ -174,9 +193,11 @@ export function registerExtractionTools(server: McpServer, deps: BrowserToolDeps
         // is a string script, so both transports produce identical output.
         const evaluate = await resolveEvaluator(engine, scope);
 
+        // Clamp, not reject: an over-limit cap is served at the ceiling.
+        const maxLengthClamped = maxLength === undefined ? undefined : Math.min(maxLength, MAX_EXTRACT_TEXT_CHARS);
         const markdown = await extractMarkdown(evaluate, {
           selector,
-          maxLength,
+          maxLength: maxLengthClamped,
           includeLinks,
         });
 

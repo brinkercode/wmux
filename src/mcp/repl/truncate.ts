@@ -95,8 +95,16 @@ function elisionMarker(bytes: number): string {
 /**
  * Truncate an already-complete string to `capBytes`, keeping head and tail.
  * Used for the inspected return value, which arrives in one piece.
+ *
+ * `marker` renders the elision seam; the REPL default keeps the historical
+ * "… N bytes elided …" line, while the tool-result guard passes one that
+ * names the raise path (`maxBytes`).
  */
-export function truncateText(input: string, capBytes: number): TruncatedText {
+export function truncateText(
+  input: string,
+  capBytes: number,
+  marker: (elidedBytes: number) => string = elisionMarker,
+): TruncatedText {
   const buf = Buffer.from(input, 'utf8');
   if (buf.length <= capBytes) {
     return { text: input, truncated: false, totalBytes: buf.length, elidedBytes: 0 };
@@ -109,7 +117,7 @@ export function truncateText(input: string, capBytes: number): TruncatedText {
   return {
     text:
       buf.subarray(0, headEnd).toString('utf8') +
-      elisionMarker(elidedBytes) +
+      marker(elidedBytes) +
       buf.subarray(tailStart).toString('utf8'),
     truncated: true,
     totalBytes: buf.length,
