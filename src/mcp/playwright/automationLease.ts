@@ -19,6 +19,11 @@ import {
   renderPromotedHintBlock,
   type PromotedRecord,
 } from '../../shared/browserReplay/promotedSkill';
+import {
+  domainFromUrl,
+  renderSiteMemoryBlock,
+  type SiteMemoryRecord,
+} from '../../shared/browserMemory/siteMemory';
 
 // Renew well inside main's 30s RPC-lease TTL so a long-running tool op
 // (browser_wait_for, slow page interactions) never lapses mid-flight.
@@ -187,7 +192,8 @@ async function prependReplayHints<T>(
     // Both stores, in one round trip pair. A promoted flow may have outlived
     // its recording, so consulting only the cache would go silent on exactly
     // the flows the user chose to keep.
-    const [res, promotedRes] = await Promise.all([
+    const domain = domainFromUrl(landed.url);
+    const [res, promotedRes, siteRes] = await Promise.all([
       sendScopedBrowserRpc<{ traces?: TraceRecord[] }>('browser.actionCache.list', scope, {
         urlKey,
       }),
@@ -196,6 +202,17 @@ async function prependReplayHints<T>(
         scope,
         { urlKey },
       ).catch(() => ({ promoted: [] as PromotedRecord[] })),
+      // The `.catch` is not optional. Without it, attaching to a main that
+      // predates this method rejects the whole Promise.all, the outer
+      // try/catch swallows it, and the EXISTING [replay] and [skill] hints
+      // vanish too — a new feature silently deleting two working ones.
+      domain
+        ? sendScopedBrowserRpc<{ memory?: SiteMemoryRecord | null }>(
+            'browser.siteMemory.list',
+            scope,
+            { domain },
+          ).catch(() => ({ memory: null }))
+        : Promise.resolve({ memory: null }),
     ]);
     const promoted = promotedRes?.promoted ?? [];
     const promotedNames = new Set(promoted.map((r) => r.name));
@@ -215,12 +232,21 @@ async function prependReplayHints<T>(
         ? `[replay] ${names.length} recorded flow(s) for this page: ${names.join(', ')} — ` +
           `browser_replay {action:"run", name:"..."} repeats one without a snapshot.\n`
         : '';
-    if (!promotedBlock && !replayBlock) return result;
+    // What this domain has cost before. First, because it is the only block
+    // that can stop the agent from doing something rather than offer it
+    // something to do — and re-rendered from the record rather than served
+    // from a stored string, so a hand-edited file still meets the guards.
+    const siteBlock = renderSiteMemoryBlock(siteRes?.memory ?? null, urlKey);
+    // siteBlock is part of the early return, not just the concatenation. The
+    // main scenario for this feature is a domain with NO recorded flows —
+    // failure memory and nothing else — and checking only the other two would
+    // mean the block never appears on exactly those pages.
+    if (!promotedBlock && !replayBlock && !siteBlock) return result;
     // Marked, not just prefixed: browser_repl separates hints from tool output
     // by this marker, and a page must not be able to forge one. See hintBlock.ts.
     shaped.content.unshift({
       type: 'text',
-      text: `${promotedBlock}${replayBlock}`,
+      text: `${siteBlock}${promotedBlock}${replayBlock}`,
       _meta: hintBlockMeta(),
     });
   } catch {

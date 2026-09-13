@@ -29,6 +29,7 @@ import {
   type PromotedRecord,
 } from '../../shared/browserReplay/promotedSkill';
 import { requireBrowserTargetScope } from '../playwright/browserScope';
+import { domainFromUrl } from '../../shared/browserMemory/siteMemory';
 import { ringFor } from './actionRing';
 import { replayBlockedReason, replayTrace, type ReplayResult } from './replayRunner';
 
@@ -74,6 +75,56 @@ const BROWSER_REPLAY_SHAPE = {
     .optional()
     .describe('Omit for the active surface.'),
 };
+
+/**
+ * Tell the site memory how this replay went. Fire-and-forget, always.
+ *
+ * The one instruction a failed replay can leave behind that is worth having
+ * next time is "this page moved; re-record before trusting the old path", so
+ * `tryInstead` is a CONSTANT chosen by this code rather than anything derived
+ * from the page. The `cause` is the failed step's own detail, which is
+ * code-authored prose that interpolates element names — page-derived text —
+ * and is therefore sanitised and secret-filtered on the main side like every
+ * other field, with no exemption for where it came from.
+ *
+ * Attribution is the trace's OWN domain, from trace.urlKey. A flow that fails
+ * mid-redirect on an identity provider has not taught us anything about that
+ * provider, and filing it there would put one site's noise in another site's
+ * memory.
+ */
+function recordReplayOutcome(
+  scope: BrowserTargetScope,
+  trace: TraceRecord,
+  name: string,
+  result: ReplayResult,
+): void {
+  const domain = domainFromUrl(trace.urlKey);
+  if (!domain) return;
+  if (result.ok) {
+    // Counter only — never a note. A note carrying the count would hash to a
+    // new id on every success and evict the agent's own notes at the cap.
+    void sendScopedBrowserRpc('browser.siteMemory.record', scope, {
+      domain,
+      kind: 'success',
+    }).catch(() => {});
+    return;
+  }
+  // An inconclusive run means the PAGE changed shape, not that the flow is
+  // broken — the same reason it is kept out of the trace's failure streak.
+  if (result.inconclusive === true) return;
+  const failed = result.steps.filter((s) => !s.ok)[0];
+  void sendScopedBrowserRpc('browser.siteMemory.record', scope, {
+    domain,
+    kind: 'failure',
+    source: 'replay',
+    urlKey: trace.urlKey,
+    what: `replay "${name}" stopped at step ${result.failedStep ?? '?'}`,
+    cause: failed?.detail ?? '',
+    tryInstead: 'this page needs re-recording — snapshot, finish live, then save again',
+  }).catch(() => {
+    /* memory is bookkeeping; it never fails a replay */
+  });
+}
 
 function text(body: string, isError = false) {
   return { content: [{ type: 'text' as const, text: body }], ...(isError && { isError: true }) };
@@ -411,6 +462,7 @@ export function createReplayToolCatalog(deps: BrowserToolDeps) {
     }).catch(() => {
       /* statistics are an optimization for the hint pipe; never fail a run on them */
     });
+    recordReplayOutcome(scope, trace, name, result);
     const restoreNote = restoredFromPromotion
       ? '\n  (restored from the promoted copy — the 30-day recording had expired. ' +
         'A successful run does not re-create the recording; save it again if you want one.)'
