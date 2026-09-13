@@ -29,18 +29,25 @@ export function unlistToolsFromListing(
 ): void {
   if (hidden.size === 0) return;
   const protocol = server.server as unknown as {
-    _requestHandlers: HandlerMap;
+    _requestHandlers?: HandlerMap;
     setRequestHandler: McpServer['server']['setRequestHandler'];
   };
   // The map key is the protocol method literal the SDK derives from the
   // schema's method field ('tools/list').
-  const original = protocol._requestHandlers.get('tools/list');
+  const original = protocol._requestHandlers?.get('tools/list');
   if (!original) {
     // The SDK installs the list handler lazily, on the first tool
-    // registration. This is called after every registration site has run, so
-    // a missing handler means the SDK changed shape — fail loudly rather
-    // than silently listing tools the baseline says are gone.
-    throw new Error('wmux-mcp: tools/list handler missing; cannot apply the unlisted-tools filter');
+    // registration, and _requestHandlers is a PRIVATE field an SDK upgrade
+    // can rename or restructure at any time. A missing slot is exactly that
+    // scenario — warn once and serve the UNFILTERED listing rather than
+    // killing server boot: a fat tools/list beats no server at all, and the
+    // protocol probe pins the listed surface so the regression surfaces in
+    // CI instead of at boot.
+    console.warn(
+      '[wmux-mcp] tools/list handler not found; serving the unfiltered tool listing ' +
+      '(the unlisted-tools diet is inactive — the MCP SDK likely changed shape)',
+    );
+    return;
   }
   protocol.setRequestHandler(ListToolsRequestSchema, async (request, extra) => {
     const result = await original(request as never, extra as never);
