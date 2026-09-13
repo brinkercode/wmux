@@ -43,7 +43,7 @@ import { inputSchemaDeclaresMaxBytes, wrapHandlerWithResultCap } from '../../res
 import { attachPageCapture } from '../pageCapture';
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
-  content: { type: string; text?: string; data?: string }[];
+  content: { type: string; text?: string; data?: string; mimeType?: string }[];
   isError?: boolean;
 }>;
 
@@ -213,25 +213,57 @@ describe('browser_response_body — text cap honours maxBytes', () => {
   });
 });
 
-describe('browser_screenshot — explicit image ceiling', () => {
-  function chromePageWithScreenshot(png: Buffer): FakePageWithScreenshot {
+describe('browser_screenshot — downscales, never refuses', () => {
+  /**
+   * The fake page answers a PNG request with `png` and any JPEG rung with a
+   * payload sized by the rung's scale, which is what a real re-capture does.
+   */
+  function chromePageWithScreenshot(
+    png: Buffer,
+    jpegBytes: (scale: number) => number = (scale) => Math.round(3 * 1024 * 1024 * scale * 0.2),
+  ): { calls: Record<string, unknown>[] } {
+    const calls: Record<string, unknown>[] = [];
     const page = makePage() as FakePageWithScreenshot;
-    page.screenshot = async () => png;
+    (page as { screenshot: (opts?: Record<string, unknown>) => Promise<Buffer> }).screenshot =
+      async (opts = {}) => {
+        calls.push(opts);
+        if (opts['type'] !== 'jpeg') return png;
+        return Buffer.alloc(jpegBytes(opts['scale'] === 'css' ? 0.5 : 1), 9);
+      };
     resolveWorkspaceBackend.mockResolvedValue('chrome');
     getPage.mockResolvedValue(asPage(page));
-    return page;
+    return { calls };
   }
 
-  it('refuses an oversized PNG with guidance instead of downscaling it', async () => {
+  it('downscales an oversized capture instead of refusing, and states the factor', async () => {
     // 3 MiB of PNG -> 4 MiB of base64, over the 2 MiB ceiling.
-    chromePageWithScreenshot(Buffer.alloc(3 * 1024 * 1024, 7));
+    const { calls } = chromePageWithScreenshot(Buffer.alloc(3 * 1024 * 1024, 7));
 
     const result = await screenshot!({});
 
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toMatch(
-      /browser_screenshot refused: the PNG encodes to 4\.0 MiB of base64, over the 2 MiB ceiling\./,
-    );
+    expect(result.isError).toBeFalsy();
+    const image = result.content.find((part) => part.type === 'image');
+    expect(image?.mimeType).toBe('image/jpeg');
+    expect((image?.data ?? '').length).toBeLessThanOrEqual(2 * 1024 * 1024);
+    // A JPEG re-capture actually happened, not a refusal.
+    expect(calls.some((opts) => opts['type'] === 'jpeg')).toBe(true);
+    const note = result.content.find((part) => part.type === 'text')?.text ?? '';
+    expect(note).toMatch(/Downscaled to fit the 2\.0 MiB ceiling: JPEG q\d+/);
+    expect(note).toContain('Pass maxBytes');
+    expect(note).not.toContain('refused');
+  });
+
+  it('returns the original untouched when maxBytes raises the ceiling above it', async () => {
+    const png = Buffer.alloc(3 * 1024 * 1024, 7);
+    const { calls } = chromePageWithScreenshot(png);
+
+    const result = await screenshot!({ maxBytes: 8 * 1024 * 1024 });
+
+    const image = result.content.find((part) => part.type === 'image');
+    expect(image?.mimeType).toBe('image/png');
+    expect(image?.data).toBe(png.toString('base64'));
+    // No shrink was attempted at all.
+    expect(calls.every((opts) => opts['type'] !== 'jpeg')).toBe(true);
   });
 
   it('passes an under-ceiling capture through with the image intact', async () => {
@@ -243,5 +275,25 @@ describe('browser_screenshot — explicit image ceiling', () => {
     expect(result.isError).toBeFalsy();
     const image = result.content.find((part) => part.type === 'image');
     expect(image?.data).toBe(png.toString('base64'));
+    expect(image?.mimeType).toBe('image/png');
+  });
+
+  it('reports honestly when the lane offers no downscale knob', async () => {
+    // An RPC-lane daemon that predates the parameters answers the same PNG
+    // with no mimeType: no knob, so say so rather than refuse.
+    resolveWorkspaceBackend.mockResolvedValue('electron');
+    getPage.mockResolvedValue(null);
+    const oversized = Buffer.alloc(3 * 1024 * 1024, 7).toString('base64');
+    mockSendRpc.mockImplementation(async (method: string) => {
+      if (method === 'browser.screenshot') return { data: oversized };
+      throw new Error(`unexpected rpc ${method}`);
+    });
+
+    const result = await screenshot!({});
+
+    const image = result.content.find((part) => part.type === 'image');
+    expect(image?.mimeType).toBe('image/png');
+    const note = result.content.find((part) => part.type === 'text')?.text ?? '';
+    expect(note).toContain('this capture path offers no downscale');
   });
 });

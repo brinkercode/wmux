@@ -28,6 +28,25 @@ export const MAX_RESULT_CAP_BYTES = 512 * 1024;
  * the caller's context.
  */
 export const MAX_SCREENSHOT_BASE64_BYTES = 2 * 1024 * 1024;
+/**
+ * Hard bound a caller can raise the screenshot ceiling to with `maxBytes`.
+ * Above the default ceiling the tool DOWNSCALES rather than refusing, so this
+ * exists for the caller who genuinely wants the original pixels — a visual
+ * diff, an OCR pass — and accepts the context cost knowingly.
+ */
+export const MAX_SCREENSHOT_MAXBYTES = 8 * 1024 * 1024;
+
+/**
+ * Resolve the screenshot base64 ceiling from a caller's `maxBytes`. Clamped,
+ * never rejected: absent or unusable falls back to the 2 MiB default, and an
+ * over-bound ask is served at 8 MiB.
+ */
+export function clampScreenshotCeilingBytes(requested: unknown): number {
+  if (typeof requested !== 'number' || !Number.isFinite(requested) || requested <= 0) {
+    return MAX_SCREENSHOT_BASE64_BYTES;
+  }
+  return Math.min(Math.floor(requested), MAX_SCREENSHOT_MAXBYTES);
+}
 
 /**
  * Resolve the per-call cap from a tool input. Only inputs whose schema

@@ -1,5 +1,5 @@
 import type { BrowserWindow, WebContents } from 'electron';
-import { shell, webContents } from 'electron';
+import { nativeImage, shell, webContents } from 'electron';
 import type { RpcRouter } from '../RpcRouter';
 import { sendToRenderer } from './_bridge';
 import {
@@ -597,6 +597,47 @@ async function movePointerTo(
 // CDP event capture for browser_console / browser_network / browser_response_body
 // in packaged builds (#106). Lazy: enables domains on first drain call.
 const captureManager = new BrowserCaptureManager();
+
+/**
+ * browser.screenshot re-encode helpers. browser_screenshot downscales rather
+ * than refusing an over-ceiling capture (owner decision: no capability
+ * regression), and this is the only process that holds the pixels, so the
+ * JPEG/scale pass runs here. Both knobs are clamped, never rejected: a bad
+ * number degrades to a sane capture instead of failing the call.
+ */
+function clampScreenshotQuality(requested: unknown): number {
+  if (typeof requested !== 'number' || !Number.isFinite(requested)) return 80;
+  return Math.min(100, Math.max(1, Math.round(requested)));
+}
+
+function clampScreenshotScale(requested: unknown): number {
+  if (typeof requested !== 'number' || !Number.isFinite(requested)) return 1;
+  return Math.min(1, Math.max(0.05, requested));
+}
+
+function reencodeNativeImage(
+  image: Electron.NativeImage,
+  quality: number,
+  scale: number,
+): { data: string; mimeType: string } {
+  const sized = image.getSize();
+  const scaled =
+    scale < 1 && sized.width > 0
+      ? image.resize({
+          width: Math.max(1, Math.round(sized.width * scale)),
+          quality: 'good',
+        })
+      : image;
+  return { data: scaled.toJPEG(quality).toString('base64'), mimeType: 'image/jpeg' };
+}
+
+function reencodeCapture(
+  png: Buffer,
+  quality: number,
+  scale: number,
+): { data: string; mimeType: string } {
+  return reencodeNativeImage(nativeImage.createFromBuffer(png), quality, scale);
+}
 
 // #529: how long browser.screenshot waits on CDP Page.captureScreenshot before
 // falling back to webContents.capturePage(). Generous against slow-but-alive
@@ -2057,6 +2098,13 @@ export function registerBrowserRpc(
   registerLeased('browser.screenshot', async (params, scope) => {
     const surfaceId = typeof params['surfaceId'] === 'string' ? params['surfaceId'] : undefined;
     const fullPage = params['fullPage'] === true;
+    // Re-encode knobs (browser_screenshot's downscale ladder). Pixels for this
+    // lane exist only here, so the shrink has to happen in the main process;
+    // the caller gets mimeType back and treats a missing/png answer as "this
+    // daemon has no knob" rather than as a failure.
+    const wantsJpeg = params['format'] === 'jpeg';
+    const quality = clampScreenshotQuality(params['quality']);
+    const scale = clampScreenshotScale(params['scale']);
 
     const target = webviewCdpManager.getTarget(surfaceId, scope);
     if (!target) throw noTargetError('browser.screenshot', surfaceId, scope);
@@ -2088,7 +2136,10 @@ export function registerBrowserRpc(
       }),
     ]);
     if (raced !== timeoutMarker && raced && typeof (raced as { data?: unknown }).data === 'string') {
-      return { data: (raced as { data: string }).data };
+      const png = (raced as { data: string }).data;
+      return wantsJpeg
+        ? reencodeCapture(Buffer.from(png, 'base64'), quality, scale)
+        : { data: png };
     }
 
     // Fallback: viewport-only, so a fullPage request degrades to the viewport
@@ -2103,7 +2154,9 @@ export function registerBrowserRpc(
       }),
     ]);
     if (fallback !== timeoutMarker && fallback && !fallback.isEmpty()) {
-      return { data: fallback.toPNG().toString('base64') };
+      return wantsJpeg
+        ? reencodeNativeImage(fallback, quality, scale)
+        : { data: fallback.toPNG().toString('base64') };
     }
     // No capture path can produce pixels for this guest right now. Typical
     // cause: the pane's workspace is hidden and the compositor has stopped
