@@ -109,6 +109,54 @@ describe('truncation marker raise path', () => {
   });
 });
 
+describe('JSON-aware truncation', () => {
+  // browser_extract_data / browser_network shape: one top-level array of
+  // records. A head+tail cut would land mid-value and leave a blob the caller
+  // cannot parse.
+  const records = Array.from({ length: 400 }, (_, i) => ({
+    index: i,
+    url: `https://example.test/item/${i}`,
+    note: 'p'.repeat(500),
+  }));
+  const document = JSON.stringify(records, null, 2);
+
+  it('keeps a capped JSON array parseable by dropping trailing items', () => {
+    expect(Buffer.byteLength(document, 'utf8')).toBeGreaterThan(DEFAULT_RESULT_CAP_BYTES);
+    const capped = capText(document, DEFAULT_RESULT_CAP_BYTES);
+    expect(Buffer.byteLength(capped, 'utf8')).toBeLessThanOrEqual(DEFAULT_RESULT_CAP_BYTES);
+
+    const parsed = JSON.parse(capped) as Record<string, unknown>[];
+    expect(Array.isArray(parsed)).toBe(true);
+    // Leading records survive intact, not cut mid-value.
+    expect(parsed[0]).toEqual(records[0]);
+    // The last element states what was dropped, inside the data.
+    const marker = parsed[parsed.length - 1]?.['_truncated'] as Record<string, number>;
+    expect(marker.shownItems).toBe(parsed.length - 1);
+    expect(marker.totalItems).toBe(records.length);
+    expect(marker.totalBytes).toBe(Buffer.byteLength(document, 'utf8'));
+    expect(marker.shownItems).toBeGreaterThan(0);
+    expect(marker).not.toHaveProperty('raise');
+  });
+
+  it('names the raise path inside the marker element only when declared', () => {
+    const capped = capText(document, DEFAULT_RESULT_CAP_BYTES, { declaresMaxBytes: true });
+    const parsed = JSON.parse(capped) as Record<string, unknown>[];
+    const marker = parsed[parsed.length - 1]?.['_truncated'] as Record<string, unknown>;
+    expect(marker['raise']).toBe(`pass maxBytes up to ${MAX_RESULT_CAP_BYTES}`);
+  });
+
+  it('re-capping an already-capped JSON array is a no-op', () => {
+    const once = capText(document, DEFAULT_RESULT_CAP_BYTES);
+    expect(capText(once, DEFAULT_RESULT_CAP_BYTES)).toBe(once);
+  });
+
+  it('falls back to the head+tail cut for text that is not a JSON array', () => {
+    const object = JSON.stringify({ body: 'z'.repeat(200_000) });
+    const capped = capText(object, DEFAULT_RESULT_CAP_BYTES);
+    expect(capped).toMatch(/\[truncated: \d+ of \d+ bytes shown\]/);
+  });
+});
+
 describe('idempotency', () => {
   it('re-applying capText to capped output is a no-op', () => {
     const input = 'm'.repeat(600_000);

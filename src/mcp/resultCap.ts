@@ -90,14 +90,77 @@ function toolResultMarker(
 }
 
 /**
+ * Cap a result that is a single top-level JSON ARRAY by dropping trailing
+ * items, so the output is still `JSON.parse`-able.
+ *
+ * A head+tail cut lands in the middle of a value and leaves an unparseable
+ * document — the caller of browser_extract_data or browser_network gets a
+ * truncated blob it then has to repair by hand. Dropping whole items and
+ * appending one `{"_truncated": …}` element keeps the contract the tool
+ * advertised (an array of records) and states what was dropped IN the data.
+ * Returns null when the text is not such a document, or when not even the
+ * marker element fits — both fall back to the head+tail cut.
+ */
+function capJsonArray(
+  text: string,
+  capBytes: number,
+  totalBytes: number,
+  declaresMaxBytes: boolean,
+): string | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) return null;
+  const render = (shownItems: number): string =>
+    JSON.stringify(
+      [
+        ...parsed.slice(0, shownItems),
+        {
+          _truncated: {
+            shownItems,
+            totalItems: parsed.length,
+            totalBytes,
+            ...(declaresMaxBytes && { raise: `pass maxBytes up to ${MAX_RESULT_CAP_BYTES}` }),
+          },
+        },
+      ],
+      null,
+      2,
+    );
+  const fits = (shownItems: number): boolean =>
+    Buffer.byteLength(render(shownItems), 'utf8') <= capBytes;
+  if (!fits(0)) return null;
+  // Largest prefix that still fits. Items vary in size, so this is a search,
+  // not an average — one huge record must not evict every small one after it.
+  let low = 0;
+  let high = parsed.length - 1;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (fits(mid)) low = mid;
+    else high = mid - 1;
+  }
+  return render(low);
+}
+
+/**
  * Cap one text string, head+tail, on UTF-8 codepoint boundaries. The marker
  * counts INSIDE the budget: the returned string never exceeds `capBytes`,
- * so a second application over already-capped text is a no-op.
+ * so a second application over already-capped text is a no-op. A result that
+ * is a single top-level JSON array is capped by dropping trailing items
+ * instead, so it stays parseable.
  */
 export function capText(text: string, capBytes: number, options?: ResultCapOptions): string {
   const totalBytes = Buffer.byteLength(text, 'utf8');
   if (totalBytes <= capBytes) return text;
-  const marker = toolResultMarker(totalBytes, options?.declaresMaxBytes === true);
+  const declaresMaxBytes = options?.declaresMaxBytes === true;
+  const asJson = capJsonArray(text, capBytes, totalBytes, declaresMaxBytes);
+  if (asJson !== null) return asJson;
+  const marker = toolResultMarker(totalBytes, declaresMaxBytes);
   // Reserve room for the marker, truncate, then verify the postcondition:
   // the marker embeds digit counts that shift by a byte or two when the
   // retained head/tail sizes change, so the first budget is an estimate

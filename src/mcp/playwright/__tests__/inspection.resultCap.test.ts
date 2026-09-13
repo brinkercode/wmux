@@ -191,9 +191,15 @@ describe('browser_network — text cap honours maxBytes', () => {
 
     const result = await network!({});
 
-    expect(result.content[0].text).toMatch(
-      /\[truncated: \d+ of \d+ bytes shown; pass maxBytes to raise, up to 512 KiB\]/,
-    );
+    // The request log is one top-level JSON array, so the cap drops trailing
+    // entries and the caller can still parse what it got.
+    const text = result.content[0].text ?? '';
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(64 * 1024);
+    const parsed = JSON.parse(text) as Record<string, unknown>[];
+    expect(parsed[0]).toHaveProperty('url');
+    const marker = parsed[parsed.length - 1]?.['_truncated'] as Record<string, unknown>;
+    expect(marker['totalItems']).toBe(200);
+    expect(marker['raise']).toBe('pass maxBytes up to 524288');
   });
 });
 
