@@ -153,7 +153,9 @@ export function toolInputSchema(
   return z.strictObject(spec.inputSchema, {
     error: (issue) =>
       issue.code === 'unrecognized_keys'
-        ? `unknown option ${issue.keys.map((key) => `"${key}"`).join(', ')}; ${tail}`
+        // JSON.stringify, not bare quotes: a key containing a quote or a
+        // newline has to read back as one key, not as broken punctuation.
+        ? `unknown option ${issue.keys.map((key) => JSON.stringify(key)).join(', ')}; ${tail}`
         // Every other issue keeps Zod's own wording; only the unknown-key
         // case has a message worth replacing.
         : undefined,
