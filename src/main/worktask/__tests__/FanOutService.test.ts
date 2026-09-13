@@ -447,7 +447,10 @@ describe('§0 E2E 정상 — N=2 전부 성공', () => {
     const promptFile = renderer.spawned[0].initialCommand.match(/'([^']*prompt\.md)'/)?.[1];
     const body = fs.readFileSync(promptFile!, 'utf8');
     expect(body.startsWith('BUILD IT')).toBe(true);
-    expect(body).toContain('a2a_task_send');
+    expect(body).toContain('send_message');
+    // The preamble is LLM-facing: it must teach the LISTED delivery tool,
+    // never the unlisted a2a_task_send alias (#1302).
+    expect(body).not.toContain('a2a_task_send');
     expect(body).toContain('channel_unread');
     // 계약문의 핵심: 워크스페이스 단위 채널 포스트는 프롬프트에 붙지 않는다.
     expect(body).toMatch(/not.*pasted/i);

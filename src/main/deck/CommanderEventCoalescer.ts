@@ -1322,7 +1322,7 @@ function renderEventLine(
       : '(A2A TASK FAILED — query and report the failure; do not retry or reassign in this mode.)';
   } else if (e.kind === 'a2a.input_required') {
     verdict = mayDrive
-      ? `(A2A TASK NEEDS INPUT — query task ${sanitizeSnippet(a2a?.taskId ?? e.ptyId)}, resolve the question from policy/context, and reply with a2a_task_send({task_id, message}); escalate only a genuine residual fork.)`
+      ? `(A2A TASK NEEDS INPUT — query task ${sanitizeSnippet(a2a?.taskId ?? e.ptyId)}, resolve the question from policy/context, and reply with send_message({task_id, message}); escalate only a genuine residual fork.)`
       : '(A2A TASK NEEDS INPUT — query and relay the question to the operator; do not answer it in this mode.)';
   } else if (e.kind === 'a2a.canceled') {
     verdict = mayDrive

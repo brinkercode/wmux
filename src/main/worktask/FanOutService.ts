@@ -85,7 +85,7 @@ export const WORKER_DELIVERY_PREAMBLE = `
 
 You are running in a wmux pane. When this task is done and you go idle:
 
-- A **task sent to you** (\`a2a_task_send\`) IS pasted into your prompt — it starts a new turn on its own.
+- A **task sent to you** (\`send_message\`) IS pasted into your prompt — it starts a new turn on its own.
 - A **channel mention that pins your pane** is pasted the same way, at your next idle moment.
 - A channel post that mentions only your *workspace* — or that mentions nobody — is **not** pasted. It raises an unread badge and nothing else.
 

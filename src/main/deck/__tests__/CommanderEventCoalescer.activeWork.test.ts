@@ -15,6 +15,7 @@ import {
   type BufferedEvent,
 } from '../CommanderEventCoalescer';
 import type { WorkspaceAutonomy } from '../deckAutonomyStore';
+import { UNLISTED_TOOLS } from '../../../shared/unlistedTools';
 
 const OFF_AUTONOMY: WorkspaceAutonomy = {
   mode: 'off', wakePolicy: 'none',
@@ -183,7 +184,13 @@ describe('request-scoped grant does NOT widen approvalPress', () => {
     expect(reportOnly).toMatch(/do not answer it in this mode/i);
 
     const driving = buildEventPrompt([ev], canDrive, budget, { workActive: true });
-    expect(driving).toMatch(/a2a_task_send/);
+    // The nudge is LLM-facing instruction text: it must name a LISTED tool
+    // (send_message) with the alias's exact reply shape — an unlisted name
+    // would tell the brain to call a tool it cannot see (#1302).
+    expect(driving).toMatch(/send_message\(\{task_id, message\}\)/);
+    for (const unlisted of UNLISTED_TOOLS) {
+      expect(driving).not.toContain(unlisted);
+    }
   });
 });
 

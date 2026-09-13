@@ -105,7 +105,7 @@ const PANE_STASH_SHAPE = {
   restore: z
     .boolean()
     .optional()
-    .describe('true to put a stashed pane back into the layout instead (the pane_unstash action). Idempotent: an already-visible pane is success.'),
+    .describe('true to put a stashed pane back into the layout instead of stashing it. Idempotent: an already-visible pane is success.'),
 };
 
 const PANE_UNSTASH_SHAPE = {
