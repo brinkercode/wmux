@@ -108,8 +108,9 @@ describe('result-size guard on the legacy server.tool lane (terminal tools)', ()
       const res = await callTool(client, 'terminal_read', {});
       expect(res.isError).toBeFalsy();
       expect(res.text.length).toBeLessThan(HUNDRED_KIB);
+      // The marker counts inside the cap, so slightly under 64 KiB is shown.
       expect(res.text).toMatch(
-        /\[truncated: 65536 of 614400 bytes shown; pass maxBytes to raise, up to 512 KiB\]/,
+        /\[truncated: \d+ of 614400 bytes shown; pass maxBytes to raise, up to 512 KiB\]/,
       );
     } finally {
       await close();
@@ -130,7 +131,7 @@ describe('result-size guard on the legacy server.tool lane (terminal tools)', ()
       const clamped = await callTool(client, 'terminal_read', { maxBytes: 100 * 1024 * 1024 });
       expect(clamped.text.length).toBeLessThan(600 * 1024);
       expect(clamped.text).toMatch(
-        /\[truncated: 524288 of 614400 bytes shown; pass maxBytes to raise, up to 512 KiB\]/,
+        /\[truncated: \d+ of 614400 bytes shown; pass maxBytes to raise, up to 512 KiB\]/,
       );
     } finally {
       await close();

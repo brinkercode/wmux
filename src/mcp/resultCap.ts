@@ -43,21 +43,56 @@ export function clampResultCapBytes(requested: unknown): number {
   return Math.min(Math.floor(requested), MAX_RESULT_CAP_BYTES);
 }
 
-/**
- * Marker naming the raise path, so an agent that hits the cap learns in the
- * same result how to ask for more — and where the ceiling is.
- */
-function toolResultMarker(totalBytes: number): (elidedBytes: number) => string {
-  return (elidedBytes) =>
-    `\n[truncated: ${totalBytes - elidedBytes} of ${totalBytes} bytes shown; ` +
-    'pass maxBytes to raise, up to 512 KiB]\n';
+/** Options shared by the cap entry points. */
+export interface ResultCapOptions {
+  /**
+   * Whether the tool's input schema declares `maxBytes`. The truncation
+   * marker names the raise path only when passing maxBytes would actually
+   * work — on a strictInput tool without the field the call would error, and
+   * on a stripping tool the key would be silently dropped.
+   */
+  readonly declaresMaxBytes?: boolean;
 }
 
-/** Cap one text string, head+tail, on UTF-8 codepoint boundaries. */
-export function capText(text: string, capBytes: number): string {
+/**
+ * Marker naming the raise path, so an agent that hits the cap learns in the
+ * same result how to ask for more — and where the ceiling is. `shownBytes`
+ * is always the TRUE count of retained original bytes; `totalBytes` is
+ * always the original document size, never the size of a previous pass.
+ */
+function toolResultMarker(
+  totalBytes: number,
+  declaresMaxBytes: boolean,
+): (shownBytes: number) => string {
+  const raise = declaresMaxBytes ? '; pass maxBytes to raise, up to 512 KiB' : '';
+  return (shownBytes) => `\n[truncated: ${shownBytes} of ${totalBytes} bytes shown${raise}]\n`;
+}
+
+/**
+ * Cap one text string, head+tail, on UTF-8 codepoint boundaries. The marker
+ * counts INSIDE the budget: the returned string never exceeds `capBytes`,
+ * so a second application over already-capped text is a no-op.
+ */
+export function capText(text: string, capBytes: number, options?: ResultCapOptions): string {
   const totalBytes = Buffer.byteLength(text, 'utf8');
   if (totalBytes <= capBytes) return text;
-  return truncateText(text, capBytes, toolResultMarker(totalBytes)).text;
+  const marker = toolResultMarker(totalBytes, options?.declaresMaxBytes ?? true);
+  // Reserve room for the marker, truncate, then verify the postcondition:
+  // the marker embeds digit counts that shift by a byte or two when the
+  // retained head/tail sizes change, so the first budget is an estimate
+  // corrected with at most a couple of bounded refinement passes.
+  let bodyBudget = capBytes - Buffer.byteLength(marker(totalBytes), 'utf8');
+  // truncateText hands the marker the elided byte count; shown = total - elided.
+  const elisionMarker = (elidedBytes: number): string => marker(totalBytes - elidedBytes);
+  for (let pass = 0; pass < 3 && bodyBudget > 0; pass += 1) {
+    const output = truncateText(text, bodyBudget, elisionMarker).text;
+    const size = Buffer.byteLength(output, 'utf8');
+    if (size <= capBytes) return output;
+    bodyBudget -= size - capBytes;
+  }
+  // Degenerate cap (smaller than the marker itself): only a markerless cut
+  // can still honor the byte bound.
+  return truncateText(text, capBytes, () => '').text;
 }
 
 /**
@@ -66,7 +101,7 @@ export function capText(text: string, capBytes: number): string {
  * object when nothing changed, so re-applying the guard (the catalog lane and
  * the legacy lane can both wrap one handler) stays a no-op.
  */
-export function capToolResultText<T>(result: T, capBytes: number): T {
+export function capToolResultText<T>(result: T, capBytes: number, options?: ResultCapOptions): T {
   const content = (result as { content?: unknown } | null | undefined)?.content;
   if (!Array.isArray(content)) return result;
   let changed = false;
@@ -78,7 +113,7 @@ export function capToolResultText<T>(result: T, capBytes: number): T {
       typeof (part as { text?: unknown }).text === 'string'
     ) {
       const text = (part as { text: string }).text;
-      const capped = capText(text, capBytes);
+      const capped = capText(text, capBytes, options);
       if (capped !== text) {
         changed = true;
         return { ...part, text: capped };
@@ -92,16 +127,30 @@ export function capToolResultText<T>(result: T, capBytes: number): T {
 type MaybePromise<T> = T | Promise<T>;
 
 /**
+ * Marks a handler already wrapped by the result cap. The catalog lane
+ * (registerWmuxTools) pre-wraps its callback and hands it to the patched
+ * server.registerTool, which would wrap it AGAIN — double truncation that
+ * reports the first pass's size as the original. A wrapped callback carries
+ * this mark and a second wrap returns it unchanged.
+ */
+const RESULT_CAP_WRAPPED: unique symbol = Symbol('wmuxResultCapWrapped');
+
+/**
  * Wrap a tool handler so its result passes through the text cap. The cap is
  * read from the FIRST argument (the parsed tool input), so a tool that
  * declares `maxBytes` controls its own ceiling per call. Works for both the
  * SDK's tool() and registerTool() callback shapes; thrown errors pass through
- * untouched for the SDK to render.
+ * untouched for the SDK to render. Idempotent: wrapping an already-wrapped
+ * handler returns that handler as-is.
  */
 export function wrapHandlerWithResultCap<Args extends unknown[], R>(
   handler: (...args: Args) => MaybePromise<R>,
+  options?: ResultCapOptions,
 ): (...args: Args) => MaybePromise<R> {
-  return function cappedHandler(this: unknown, ...args: Args): MaybePromise<R> {
+  if ((handler as { [RESULT_CAP_WRAPPED]?: true })[RESULT_CAP_WRAPPED] === true) {
+    return handler;
+  }
+  const wrapped = function cappedHandler(this: unknown, ...args: Args): MaybePromise<R> {
     const cap = clampResultCapBytes((args[0] as { maxBytes?: unknown } | undefined)?.maxBytes);
     const outcome = handler.apply(this, args);
     if (
@@ -109,8 +158,12 @@ export function wrapHandlerWithResultCap<Args extends unknown[], R>(
       typeof outcome === 'object' &&
       typeof (outcome as { then?: unknown }).then === 'function'
     ) {
-      return (outcome as Promise<R>).then((resolved) => capToolResultText(resolved, cap));
+      return (outcome as Promise<R>).then((resolved) =>
+        capToolResultText(resolved, cap, options),
+      );
     }
-    return capToolResultText(outcome, cap);
+    return capToolResultText(outcome, cap, options);
   };
+  (wrapped as { [RESULT_CAP_WRAPPED]?: true })[RESULT_CAP_WRAPPED] = true;
+  return wrapped;
 }

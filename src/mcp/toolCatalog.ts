@@ -211,13 +211,14 @@ export function registerWmuxTools(
         },
         // Result-size guard (src/mcp/resultCap.ts): every catalog tool's TEXT
         // result is capped at 64 KiB head+tail unless the tool's input schema
-        // declares a `maxBytes` the caller set. Idempotent, so the legacy-lane
-        // wrapper in createWmuxServer (which also covers server.tool()
-        // registrations) can wrap the same handler again as a no-op.
-        (input: Record<string, unknown>) =>
-          wrapHandlerWithResultCap(
-            (parsed: Record<string, unknown>) => spec.invoke(parsed, context),
-          )(input),
+        // declares a `maxBytes` the caller set. The wrapped callback is passed
+        // through UNADAPTED on purpose: it carries the guard's idempotency
+        // mark, so the legacy-lane wrapper in createWmuxServer (which also
+        // patches server.registerTool) recognizes it and skips a second wrap
+        // instead of truncating twice.
+        wrapHandlerWithResultCap(
+          (parsed: Record<string, unknown>) => spec.invoke(parsed, context),
+        ),
       ),
     ),
   );

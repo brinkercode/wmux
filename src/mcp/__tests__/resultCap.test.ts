@@ -45,8 +45,10 @@ describe('capText', () => {
     const input = `${'a'.repeat(200_000)}MIDDLE${'b'.repeat(200_000)}`;
     const capped = capText(input, DEFAULT_RESULT_CAP_BYTES);
     expect(capped).not.toBe(input);
-    expect(Buffer.byteLength(capped, 'utf8')).toBeLessThan(
-      DEFAULT_RESULT_CAP_BYTES + 200,
+    // The marker's own bytes count inside the budget: the output never
+    // exceeds the cap, marker included.
+    expect(Buffer.byteLength(capped, 'utf8')).toBeLessThanOrEqual(
+      DEFAULT_RESULT_CAP_BYTES,
     );
     // Marker states what fraction survived and how to ask for more.
     expect(capped).toMatch(
@@ -64,6 +66,52 @@ describe('capText', () => {
     const input = '한'.repeat(100_000);
     const capped = capText(input, DEFAULT_RESULT_CAP_BYTES + 1);
     expect(capped).not.toContain('�');
+  });
+
+  it('keeps the byte bound across caps, including ones smaller than the marker', () => {
+    for (const cap of [24, 100, 1024, 4096, DEFAULT_RESULT_CAP_BYTES]) {
+      const capped = capText(`한`.repeat(cap), cap);
+      expect(Buffer.byteLength(capped, 'utf8')).toBeLessThanOrEqual(cap);
+    }
+  });
+});
+
+describe('idempotency', () => {
+  it('re-applying capText to capped output is a no-op', () => {
+    const input = 'm'.repeat(600_000);
+    const once = capText(input, DEFAULT_RESULT_CAP_BYTES);
+    expect(capText(once, DEFAULT_RESULT_CAP_BYTES)).toBe(once);
+  });
+
+  it('returns an already-wrapped handler unchanged', () => {
+    const handler = (input: { value?: string }) => ({
+      content: [{ type: 'text' as const, text: String(input.value) }],
+    });
+    const once = wrapHandlerWithResultCap(handler);
+    expect(wrapHandlerWithResultCap(once)).toBe(once);
+  });
+
+  it('wrapping twice yields byte-identical output to wrapping once', async () => {
+    const text = 'n'.repeat(600_000);
+    const handler = async (_input: Record<string, unknown>) => ({
+      content: [{ type: 'text' as const, text }],
+    });
+    const once = wrapHandlerWithResultCap(handler);
+    // The catalog lane wraps, then the patched registerTool wraps again; the
+    // result must be one truncation pass, not two stacked markers.
+    const twice = wrapHandlerWithResultCap(
+      wrapHandlerWithResultCap(handler),
+    );
+    const [a, b] = (await Promise.all([
+      once({ maxBytes: MAX_RESULT_CAP_BYTES }),
+      twice({ maxBytes: MAX_RESULT_CAP_BYTES }),
+    ])) as { content: { text: string }[] }[];
+    expect(b.content[0]?.text).toBe(a.content[0]?.text);
+    // The marker reports the TRUE original total, not a first pass's size.
+    expect(a.content[0]?.text).toMatch(/\[truncated: \d+ of 600000 bytes shown/);
+    expect(Buffer.byteLength(a.content[0]?.text ?? '', 'utf8')).toBeLessThanOrEqual(
+      MAX_RESULT_CAP_BYTES,
+    );
   });
 });
 
@@ -119,9 +167,14 @@ describe('wrapHandlerWithResultCap', () => {
       }),
     );
     const clamped = (await wrappedBig({ maxBytes: 500 * MIB })) as { content: { text: string }[] };
+    // The marker counts inside the cap, so slightly under 512 KiB is shown —
+    // but the marker still reports the TRUE original total.
     expect(clamped.content[0]?.text).toMatch(
-      /\[truncated: 524288 of 600000 bytes shown/,
+      /\[truncated: \d+ of 600000 bytes shown/,
     );
+    expect(
+      Buffer.byteLength(clamped.content[0]?.text ?? '', 'utf8'),
+    ).toBeLessThanOrEqual(MAX_RESULT_CAP_BYTES);
   });
 
   it('lets thrown errors pass through untouched', async () => {

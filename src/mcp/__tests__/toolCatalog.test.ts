@@ -191,7 +191,7 @@ describe('typed wmux tool catalog', () => {
       mimeType: 'image/png',
     });
     expect(result.content[1]?.text).toMatch(
-      /\[truncated: 65536 of 200000 bytes shown; pass maxBytes to raise, up to 512 KiB\]/,
+      /\[truncated: \d+ of 200000 bytes shown; pass maxBytes to raise, up to 512 KiB\]/,
     );
   });
 
