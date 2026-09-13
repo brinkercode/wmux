@@ -51,20 +51,29 @@ function failingPage(error: Error) {
 
 const resolveWorkspaceId = vi.fn(async () => 'ws-caller');
 let siteRecords: Array<Record<string, unknown>>;
+/** How long the mocked record RPC takes to settle. */
+let recordDelayMs = 0;
 let navigate: ToolHandler;
 let tabs: ToolHandler;
 
 beforeEach(() => {
   vi.clearAllMocks();
   siteRecords = [];
+  recordDelayMs = 0;
   resolveWorkspaceId.mockResolvedValue('ws-caller');
   resolveWorkspaceBackend.mockResolvedValue('chrome');
   mockSendRpc.mockImplementation((method: string, params: Record<string, unknown>) => {
     if (method === 'browser.lease.acquire') return Promise.resolve({ token: 'lease-1' });
     if (method === 'browser.lifecycle.get') return Promise.resolve({ entries: [] });
     if (method === 'browser.siteMemory.record') {
-      siteRecords.push(params);
-      return Promise.resolve({ ok: true });
+      return recordDelayMs === 0
+        ? (siteRecords.push(params), Promise.resolve({ ok: true }))
+        : new Promise((resolve) =>
+            setTimeout(() => {
+              siteRecords.push(params);
+              resolve({ ok: true });
+            }, recordDelayMs),
+          );
     }
     if (method === 'browser.tabs') {
       return Promise.resolve(
@@ -125,5 +134,37 @@ describe('browser_navigate site-memory write hook', () => {
     expect(res.isError).toBe(true);
     await settle();
     expect(siteRecords).toHaveLength(0);
+  });
+  it('waits for the record before returning, so a process exit cannot lose it', async () => {
+    // A stdio MCP process can exit as soon as the tool response is written,
+    // taking an in-flight RPC with it. Measured: no file without a hold.
+    recordDelayMs = 50;
+    getPageForScope.mockResolvedValue(
+      failingPage(new Error('page.goto: net::ERR_CONNECTION_REFUSED')),
+    );
+    const res = await navigate({ url: 'https://gone.test/page' });
+    expect(res.isError).toBe(true);
+    // No settle() here: the record must already be in by the time the tool
+    // result is handed back, not merely queued behind it.
+    expect(siteRecords).toHaveLength(1);
+    expect(siteRecords[0]).toMatchObject({ cause: 'net::ERR_CONNECTION_REFUSED' });
+  });
+
+  it('gives up on a record that hangs rather than holding the navigation', async () => {
+    vi.useFakeTimers();
+    try {
+      // Longer than the bound: the agent's error must not wait on bookkeeping.
+      recordDelayMs = 60_000;
+      getPageForScope.mockResolvedValue(
+        failingPage(new Error('page.goto: net::ERR_TIMED_OUT')),
+      );
+      const pending = navigate({ url: 'https://gone.test/page' });
+      await vi.advanceTimersByTimeAsync(2_000);
+      const res = await pending;
+      expect(res.isError).toBe(true);
+      expect(siteRecords).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
