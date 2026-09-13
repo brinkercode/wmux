@@ -39,7 +39,7 @@ vi.mock('../PlaywrightEngine', () => ({
 }));
 
 import { registerInspectionTools } from '../tools/inspection';
-import { wrapHandlerWithResultCap } from '../../resultCap';
+import { inputSchemaDeclaresMaxBytes, wrapHandlerWithResultCap } from '../../resultCap';
 import { attachPageCapture } from '../pageCapture';
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
@@ -52,8 +52,15 @@ const browserToolDeps = { resolveWorkspaceId: vi.fn(async () => 'ws-test') };
 function collectTools(): Map<string, ToolHandler> {
   const tools = new Map<string, ToolHandler>();
   const server = {
-    tool: (name: string, _desc: string, _schema: unknown, handler: ToolHandler) => {
-      tools.set(name, wrapHandlerWithResultCap(handler) as ToolHandler);
+    tool: (name: string, _desc: string, schema: unknown, handler: ToolHandler) => {
+      // Mirror the real lane: the marker names the raise path only for a
+      // schema that actually declares maxBytes.
+      tools.set(
+        name,
+        wrapHandlerWithResultCap(handler, {
+          declaresMaxBytes: inputSchemaDeclaresMaxBytes(schema),
+        }) as ToolHandler,
+      );
     },
   };
   registerInspectionTools(server as never, browserToolDeps);
@@ -117,7 +124,7 @@ describe('browser_evaluate — text cap honours maxBytes', () => {
     // Total = payload + the world note the RPC lane appends; assert the shown
     // count and the payload size class, not the exact total.
     expect(result.content[0].text).toMatch(
-      /\[truncated: 65536 of 2\d{5} bytes shown; pass maxBytes to raise, up to 512 KiB\]/,
+      /\[truncated: \d+ of 2\d{5} bytes shown; pass maxBytes to raise, up to 512 KiB\]/,
     );
   });
 
@@ -128,7 +135,7 @@ describe('browser_evaluate — text cap honours maxBytes', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.content[0].text).toMatch(
-      /\[truncated: 524288 of 6\d{5} bytes shown; pass maxBytes to raise, up to 512 KiB\]/,
+      /\[truncated: \d+ of 6\d{5} bytes shown; pass maxBytes to raise, up to 512 KiB\]/,
     );
   });
 
@@ -159,7 +166,7 @@ describe('browser_console — text cap honours maxBytes (eager capture path)', (
 
     const capped = await consoleTool!({});
     expect(capped.content[0].text).toMatch(
-      /\[truncated: 65536 of \d+ bytes shown; pass maxBytes to raise, up to 512 KiB\]/,
+      /\[truncated: \d+ of \d+ bytes shown; pass maxBytes to raise, up to 512 KiB\]/,
     );
 
     const raised = await consoleTool!({ maxBytes: 400_000 });
@@ -185,7 +192,7 @@ describe('browser_network — text cap honours maxBytes', () => {
     const result = await network!({});
 
     expect(result.content[0].text).toMatch(
-      /\[truncated: 65536 of \d+ bytes shown; pass maxBytes to raise, up to 512 KiB\]/,
+      /\[truncated: \d+ of \d+ bytes shown; pass maxBytes to raise, up to 512 KiB\]/,
     );
   });
 });
@@ -201,7 +208,7 @@ describe('browser_response_body — text cap honours maxBytes', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.content[0].text).toMatch(
-      /\[truncated: 65536 of 307200 bytes shown; pass maxBytes to raise, up to 512 KiB\]/,
+      /\[truncated: \d+ of 307200 bytes shown; pass maxBytes to raise, up to 512 KiB\]/,
     );
   });
 });

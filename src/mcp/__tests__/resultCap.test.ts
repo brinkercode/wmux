@@ -12,8 +12,10 @@ import {
   capText,
   capToolResultText,
   clampResultCapBytes,
+  inputSchemaDeclaresMaxBytes,
   wrapHandlerWithResultCap,
 } from '../resultCap';
+import { z } from 'zod';
 
 const MIB = 1024 * 1024;
 
@@ -43,7 +45,7 @@ describe('capText', () => {
 
   it('truncates oversized text head+tail and marks the cut with the raise path', () => {
     const input = `${'a'.repeat(200_000)}MIDDLE${'b'.repeat(200_000)}`;
-    const capped = capText(input, DEFAULT_RESULT_CAP_BYTES);
+    const capped = capText(input, DEFAULT_RESULT_CAP_BYTES, { declaresMaxBytes: true });
     expect(capped).not.toBe(input);
     // The marker's own bytes count inside the budget: the output never
     // exceeds the cap, marker included.
@@ -73,6 +75,37 @@ describe('capText', () => {
       const capped = capText(`한`.repeat(cap), cap);
       expect(Buffer.byteLength(capped, 'utf8')).toBeLessThanOrEqual(cap);
     }
+  });
+});
+
+describe('inputSchemaDeclaresMaxBytes', () => {
+  it('reads a ZodRawShape, a ZodObject, and neither', () => {
+    expect(inputSchemaDeclaresMaxBytes({ maxBytes: z.number().optional() })).toBe(true);
+    expect(inputSchemaDeclaresMaxBytes({ code: z.string() })).toBe(false);
+    // strictInput tools hand the guard a ZodObject; its `.shape` carries the keys.
+    expect(inputSchemaDeclaresMaxBytes(z.strictObject({ maxBytes: z.number() }))).toBe(true);
+    expect(inputSchemaDeclaresMaxBytes(z.strictObject({ code: z.string() }))).toBe(false);
+    expect(inputSchemaDeclaresMaxBytes(undefined)).toBe(false);
+    expect(inputSchemaDeclaresMaxBytes(null)).toBe(false);
+    expect(inputSchemaDeclaresMaxBytes('maxBytes')).toBe(false);
+  });
+});
+
+describe('truncation marker raise path', () => {
+  const oversized = 'q'.repeat(200_000);
+
+  it('names maxBytes only for a tool whose schema declares it', () => {
+    const declared = capText(oversized, DEFAULT_RESULT_CAP_BYTES, { declaresMaxBytes: true });
+    expect(declared).toContain('pass maxBytes to raise, up to 512 KiB');
+  });
+
+  it('states the cut without a raise path the caller cannot take', () => {
+    // On a strictInput tool without the field, passing maxBytes ERRORS, so the
+    // marker must not advertise it — the default is off for exactly that case.
+    const plain = capText(oversized, DEFAULT_RESULT_CAP_BYTES);
+    expect(plain).toMatch(/\[truncated: \d+ of 200000 bytes shown\]/);
+    expect(plain).not.toContain('maxBytes');
+    expect(capText(oversized, DEFAULT_RESULT_CAP_BYTES, { declaresMaxBytes: false })).toBe(plain);
   });
 });
 

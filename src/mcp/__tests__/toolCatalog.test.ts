@@ -190,9 +190,10 @@ describe('typed wmux tool catalog', () => {
       data: imageData,
       mimeType: 'image/png',
     });
-    expect(result.content[1]?.text).toMatch(
-      /\[truncated: \d+ of 200000 bytes shown; pass maxBytes to raise, up to 512 KiB\]/,
-    );
+    // chatty_tool does not declare maxBytes, so the marker states the cut
+    // without naming a raise path the caller cannot actually take.
+    expect(result.content[1]?.text).toMatch(/\[truncated: \d+ of 200000 bytes shown\]/);
+    expect(result.content[1]?.text).not.toContain('pass maxBytes');
   });
 
   it('registers a strictInput tool with a schema that names the unknown key and the valid ones', () => {

@@ -104,6 +104,14 @@ export function formatOutcome(
 // connection). The `let` re-declaration rule is deliberately NOT here: the
 // session reports it as a remedy at the moment it bites, which reaches the
 // caller when it matters instead of costing context on every session.
+// Per-call text-result cap, honoured by the dispatch-layer guard
+// (src/mcp/resultCap.ts). Plain z.number(): the guard floors and clamps the
+// value itself (every zod numeric modifier costs bytes in tools/list).
+const maxBytesParam = z
+  .number()
+  .optional()
+  .describe('Cap the text result in bytes (default 65536, max 524288).');
+
 const REPL_RUN_DESCRIPTION =
   'Run JavaScript in a persistent Node runtime and get the return value back. ' +
   'State survives between calls: variables (including top-level let/const), required ' +
@@ -141,6 +149,7 @@ export function createReplToolCatalog(): readonly WmuxToolSpec[] {
           "Working directory, honoured only when the session is created. Defaults to the MCP " +
             "server's cwd, which is not necessarily your pane's — pass it explicitly.",
         ),
+      maxBytes: maxBytesParam,
     },
     strictInput: true,
     profiles: ['full', 'core'],

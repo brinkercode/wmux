@@ -40,7 +40,7 @@ describe('browser_repl catalog', () => {
     const result = schema.safeParse({ code: '1', timeoutMs: 500 });
     expect(result.success).toBe(false);
     expect(result.error?.issues[0]?.message).toBe(
-      'unknown option "timeoutMs"; valid: code, timeout, surfaceId',
+      'unknown option "timeoutMs"; valid: code, timeout, surfaceId, maxBytes',
     );
     expect(schema.safeParse({ code: '1' }).success).toBe(true);
     expect(

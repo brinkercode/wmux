@@ -49,7 +49,9 @@ export interface ResultCapOptions {
    * Whether the tool's input schema declares `maxBytes`. The truncation
    * marker names the raise path only when passing maxBytes would actually
    * work — on a strictInput tool without the field the call would error, and
-   * on a stripping tool the key would be silently dropped.
+   * on a stripping tool the key would be silently dropped. Defaults to false:
+   * both registration lanes read the real schema, so advertising is opt-in
+   * and a caller is never told to pass a parameter the tool does not have.
    */
   readonly declaresMaxBytes?: boolean;
 }
@@ -76,7 +78,7 @@ function toolResultMarker(
 export function capText(text: string, capBytes: number, options?: ResultCapOptions): string {
   const totalBytes = Buffer.byteLength(text, 'utf8');
   if (totalBytes <= capBytes) return text;
-  const marker = toolResultMarker(totalBytes, options?.declaresMaxBytes ?? true);
+  const marker = toolResultMarker(totalBytes, options?.declaresMaxBytes === true);
   // Reserve room for the marker, truncate, then verify the postcondition:
   // the marker embeds digit counts that shift by a byte or two when the
   // retained head/tail sizes change, so the first budget is an estimate
@@ -125,6 +127,19 @@ export function capToolResultText<T>(result: T, capBytes: number, options?: Resu
 }
 
 type MaybePromise<T> = T | Promise<T>;
+
+/**
+ * Whether a tool input schema declares `maxBytes`. Accepts the ZodRawShape
+ * that server.tool()/registerTool() take, or a ZodObject via its `.shape`
+ * (what toolInputSchema() builds for strictInput tools) — so the marker can
+ * name the raise path exactly where passing maxBytes would actually work.
+ */
+export function inputSchemaDeclaresMaxBytes(schema: unknown): boolean {
+  if (schema === null || typeof schema !== 'object') return false;
+  const shape = (schema as { shape?: unknown }).shape;
+  const raw = shape !== null && typeof shape === 'object' ? shape : schema;
+  return Object.prototype.hasOwnProperty.call(raw, 'maxBytes');
+}
 
 /**
  * Marks a handler already wrapped by the result cap. The catalog lane

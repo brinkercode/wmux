@@ -196,6 +196,14 @@ const BROWSER_REPL_DESCRIPTION =
   'globalThis to keep a value. console.log is captured; sleep(ms) is available. ' +
   'Every step still records to the action trace for browser_replay.';
 
+// Per-call text-result cap, honoured by the dispatch-layer guard
+// (src/mcp/resultCap.ts). Plain z.number(): the guard floors and clamps the
+// value itself (every zod numeric modifier costs bytes in tools/list).
+const maxBytesParam = z
+  .number()
+  .optional()
+  .describe('Cap the text result in bytes (default 65536, max 524288).');
+
 export function createBrowserReplCatalog(
   tools: ReadonlyMap<string, CollectedTool>,
 ): readonly WmuxToolSpec[] {
@@ -212,6 +220,7 @@ export function createBrowserReplCatalog(
         .string()
         .optional()
         .describe('Default surfaceId for every browser.* call in this snippet.'),
+      maxBytes: maxBytesParam,
     },
     strictInput: true,
     profiles: ['full'],

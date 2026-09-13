@@ -4,7 +4,7 @@ import type {
 } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { wrapHandlerWithResultCap } from './resultCap';
+import { inputSchemaDeclaresMaxBytes, wrapHandlerWithResultCap } from './resultCap';
 
 /**
  * Launch-time tool surfaces. A server instance selects exactly one profile and
@@ -215,9 +215,11 @@ export function registerWmuxTools(
         // through UNADAPTED on purpose: it carries the guard's idempotency
         // mark, so the legacy-lane wrapper in createWmuxServer (which also
         // patches server.registerTool) recognizes it and skips a second wrap
-        // instead of truncating twice.
+        // instead of truncating twice. The marker names the raise path only
+        // when this spec's schema actually declares maxBytes.
         wrapHandlerWithResultCap(
           (parsed: Record<string, unknown>) => spec.invoke(parsed, context),
+          { declaresMaxBytes: inputSchemaDeclaresMaxBytes(spec.inputSchema) },
         ),
       ),
     ),

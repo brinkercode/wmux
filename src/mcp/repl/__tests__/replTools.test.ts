@@ -46,7 +46,7 @@ describe('repl tool catalog', () => {
     });
     expect(run.success).toBe(false);
     expect(run.error?.issues[0]?.message).toBe(
-      'unknown option "timeoutMs"; valid: code, session, timeout, cwd',
+      'unknown option "timeoutMs"; valid: code, session, timeout, cwd, maxBytes',
     );
 
     const reset = (toolInputSchema(catalog[1]) as z.ZodObject).safeParse({

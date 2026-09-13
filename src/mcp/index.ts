@@ -33,7 +33,7 @@ import { registerWorktaskTools } from './worktask';
 import { registerGitTools } from './git';
 import { registerPaneLifecycleTools } from './paneLifecycle';
 import { registerReplTools } from './repl/tools';
-import { wrapHandlerWithResultCap } from './resultCap';
+import { inputSchemaDeclaresMaxBytes, wrapHandlerWithResultCap } from './resultCap';
 import { getWmuxMcpServerInstructions, resolveMcpServerVersion } from './serverMetadata';
 import { unlistToolsFromListing } from './listFilter';
 import { UNLISTED_TOOLS_SET } from '../shared/unlistedTools';
@@ -491,7 +491,14 @@ const server = new McpServer({
   (server as { tool: typeof server.tool }).tool = ((name: string, ...rest: unknown[]) => {
     const last = rest[rest.length - 1];
     if (typeof last === 'function') {
-      rest[rest.length - 1] = wrapHandlerWithResultCap(last as (...a: unknown[]) => unknown);
+      // The param shape is whichever leading argument is an object; the only
+      // other object overload argument (annotations) never carries maxBytes,
+      // so an OR over them names the raise path exactly where it works.
+      const declaresMaxBytes = rest.some((arg) => inputSchemaDeclaresMaxBytes(arg));
+      rest[rest.length - 1] = wrapHandlerWithResultCap(
+        last as (...a: unknown[]) => unknown,
+        { declaresMaxBytes },
+      );
     }
     return (rawTool as (...a: unknown[]) => ReturnType<typeof rawTool>)(name, ...rest);
   }) as typeof server.tool;
@@ -504,7 +511,11 @@ const server = new McpServer({
       name,
       config,
       typeof cb === 'function'
-        ? (wrapHandlerWithResultCap(cb as (...a: unknown[]) => unknown) as typeof cb)
+        ? (wrapHandlerWithResultCap(cb as (...a: unknown[]) => unknown, {
+            declaresMaxBytes: inputSchemaDeclaresMaxBytes(
+              (config as { inputSchema?: unknown } | undefined)?.inputSchema,
+            ),
+          }) as typeof cb)
         : cb,
     )) as typeof server.registerTool;
 }

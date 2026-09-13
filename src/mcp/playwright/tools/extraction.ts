@@ -42,6 +42,7 @@ const BROWSER_SMART_SNAPSHOT_SHAPE = {
     .describe('Content summary cap in characters (default 3000, max 100000).'),
   full: z.boolean().optional().describe('Force the complete tree instead of a diff.'),
   surfaceId: optionalSurfaceId,
+  maxBytes: maxBytesParam,
 };
 
 const BROWSER_EXTRACT_TEXT_SHAPE = {
