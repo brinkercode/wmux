@@ -54,7 +54,15 @@ export const SITE_MEMORY_DECAY_MS = 60 * 24 * 60 * 60 * 1000;
 /** A record untouched for this long is deleted outright by the sweep. */
 export const SITE_MEMORY_DELETE_MS = 180 * 24 * 60 * 60 * 1000;
 
-/** Hard cap on the rendered hint block, and on the lines inside it. */
+/**
+ * Hard cap on the rendered hint block.
+ *
+ * The block is ONE fixed header line plus at most SITE_HINT_MAX_LINES content
+ * lines — at most 3 failures and at most 1 note — so a full block is 5 lines
+ * on the wire. The header is not counted against the line budget because it is
+ * a constant this module owns, not memory; it is counted against the BYTE
+ * budget, because the agent pays for it either way.
+ */
 export const SITE_HINT_MAX_BYTES = 600;
 export const SITE_HINT_MAX_LINES = 4;
 /** Render-time field widths — deliberately shorter than the stored ones. */
@@ -184,9 +192,28 @@ export function sanitizeSiteText(value: unknown, max: number): string {
 // recorded", which is exactly the false reassurance that makes someone stop
 // looking for where the value went.
 
+/**
+ * A long unbroken base64/base64url run: API keys, JWT segments, bearer tokens.
+ *
+ * Delimited on both sides, and `/` is NOT in the class. Without either, the
+ * pattern matched ordinary prose: `browser_click on .checkout-form/submit`
+ * reads as one 24-character run, and a refusal there loses real failure
+ * knowledge to protect nothing. Magic-link paths are handled separately, by
+ * the urlKey filter below, which is the place that actually sees a path.
+ */
+const LONG_TOKEN_RE = /(?<![A-Za-z0-9+=_-])[A-Za-z0-9+=_-]{24,}(?![A-Za-z0-9+=_-])/;
+
+/**
+ * Kebab-case words, which the length rule alone cannot tell from a token.
+ *
+ * `submit-button-primary-large` is 27 characters of the token alphabet and
+ * carries nothing. A real secret is not a sequence of lowercase English-shaped
+ * words joined by hyphens, so a match of that exact shape is let through.
+ */
+const KEBAB_WORDS_RE = /^[a-z]+(?:-[a-z]+)+$/;
+
 const SECRET_PATTERNS: ReadonlyArray<{ kind: string; re: RegExp }> = [
-  // A long unbroken base64/base64url run: API keys, JWT segments, bearer tokens.
-  { kind: 'long-token', re: /[A-Za-z0-9+/=_-]{24,}/ },
+  { kind: 'long-token', re: LONG_TOKEN_RE },
   { kind: 'email', re: /[^\s@]+@[^\s@]+\.[A-Za-z]{2,}/ },
   // 13-19 digits with optional separators — the card-number shape.
   { kind: 'card-number', re: /(?:\d[ -]?){13,19}/ },
@@ -203,9 +230,51 @@ const SECRET_PATTERNS: ReadonlyArray<{ kind: string; re: RegExp }> = [
 export function secretKindIn(value: unknown): string | null {
   if (typeof value !== 'string' || value.length === 0) return null;
   for (const { kind, re } of SECRET_PATTERNS) {
-    if (re.test(value)) return kind;
+    const match = re.exec(value);
+    if (!match) continue;
+    if (kind === 'long-token' && KEBAB_WORDS_RE.test(match[0])) continue;
+    return kind;
   }
   return null;
+}
+
+// ── urlKey ─────────────────────────────────────────────────────────────────
+
+/**
+ * The storable form of a urlKey, or '' when its PATH carries a secret.
+ *
+ * normalizeUrlKey drops the query and the userinfo, which is why the rest of
+ * this module treats a urlKey as safe. It does not drop the PATH, and a magic
+ * link puts the whole credential there: `/reset/<jwt>`, `/invite/<token>`,
+ * `/verify/<otp>`. Persisting one for 60 days and then serving it back through
+ * browser.siteMemory.list would be exactly the leak the text filter exists to
+ * prevent, arriving through the one field that was exempt from it.
+ *
+ * The urlKey is dropped rather than the whole entry. The knowledge — this flow
+ * broke on this domain — is worth keeping; the page it broke on is the part
+ * that cannot be stored. Ranking degrades to "no exact page match", which is a
+ * weaker hint, not a wrong one.
+ *
+ * Segments, not the whole string: a path is slash-separated by definition, and
+ * testing the joined form would make a long path of short segments look like
+ * one long run.
+ */
+export function safeStorableUrlKey(urlKey: unknown): string {
+  const value = sanitizeSiteText(urlKey, MAX_URL_KEY_CHARS);
+  if (!value) return '';
+  let path = value;
+  try {
+    path = new URL(value).pathname;
+  } catch {
+    // An unparseable key is normalizeUrlKey's fallback (trimmed, lowercased).
+    // Screen the whole thing rather than assuming it has no path in it.
+    path = value;
+  }
+  for (const segment of path.split('/')) {
+    if (segment.length === 0) continue;
+    if (secretKindIn(segment)) return '';
+  }
+  return value;
 }
 
 /** The first secret kind found across several fields, or null. */
@@ -228,7 +297,11 @@ export function secretKindInAny(values: ReadonlyArray<unknown>): string | null {
  * never a second row competing for the same cap.
  */
 export function siteEntryId(parts: ReadonlyArray<string>): string {
-  const normalized = parts.map((p) => p.trim().toLowerCase()).join(' ');
+  // A space, not a NUL. The separator only has to be a character the parts
+  // cannot contain themselves — sanitizeSiteText collapses every run of
+  // whitespace and trims, so no part can carry one — and a NUL made this
+  // source file read as binary to git and grep.
+  const normalized = parts.map((p) => p.trim().toLowerCase()).join(' ');
   return createHash('sha1').update(normalized).digest('hex').slice(0, 12);
 }
 
@@ -258,7 +331,8 @@ export function buildFailureEntry(input: FailureInput, now: number): BuildResult
   // every other field, with no exception for its provenance.
   const cause = sanitizeSiteText(input.cause, MAX_CAUSE_CHARS);
   const tryInstead = sanitizeSiteText(input.tryInstead, MAX_TRY_CHARS);
-  const urlKey = sanitizeSiteText(input.urlKey, MAX_URL_KEY_CHARS);
+  // The one field the text filter used to skip. See safeStorableUrlKey.
+  const urlKey = safeStorableUrlKey(input.urlKey);
   if (!what && !cause) return { ok: false, reason: 'empty' };
   const secret = secretKindInAny([what, cause, tryInstead]);
   if (secret) return { ok: false, reason: secret };

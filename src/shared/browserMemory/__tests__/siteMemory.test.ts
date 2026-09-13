@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_SITE_FAILURES,
+  SITE_HINT_HEADER,
   SITE_HINT_MAX_BYTES,
   SITE_HINT_MAX_LINES,
   buildFailureEntry,
@@ -8,6 +9,8 @@ import {
   emptySiteMemoryRecord,
   mergeFailure,
   renderSiteMemoryBlock,
+  safeStorableUrlKey,
+  siteEntryId,
   toDomainSlug,
   type FailureEntry,
 } from '../siteMemory';
@@ -166,14 +169,75 @@ describe('siteMemory pure layer', () => {
     const block = renderSiteMemoryBlock(rec, 'https://example.com/login');
     expect(Buffer.byteLength(block, 'utf8')).toBeLessThanOrEqual(SITE_HINT_MAX_BYTES);
     const lines = block.trimEnd().split('\n');
-    // Header plus two lines: the third entry does not fit whole, so it is not
-    // rendered at all rather than being cut short.
+    // One fixed header, then content lines. Header plus two here: the third
+    // entry does not fit whole, so it is not rendered at all rather than cut.
+    expect(lines[0]).toBe(SITE_HINT_HEADER);
     expect(lines).toHaveLength(3);
-    expect(lines.length).toBeLessThanOrEqual(SITE_HINT_MAX_LINES + 1);
+    expect(lines.length - 1).toBeLessThanOrEqual(SITE_HINT_MAX_LINES);
     // Every rendered failure line keeps its whole "try instead" tail: the cap
     // drops entries, it never cuts the actionable half off one.
     for (const line of lines.slice(1)) {
       expect(line).toMatch(/-END\d$/);
     }
+  });
+  it('never persists a magic-link path, but keeps the failure', () => {
+    // normalizeUrlKey drops the query and the userinfo; it does NOT drop the
+    // path, and a magic link puts the whole credential there.
+    for (const key of [
+      'https://app.test/reset/eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0',
+      'https://app.test/invite/QUJDREVGR0hJSktMTU5PUFFSU1RVVld',
+    ]) {
+      expect(safeStorableUrlKey(key)).toBe('');
+      const built = buildFailureEntry(
+        { urlKey: key, what: 'step 2', cause: 'no element matched', tryInstead: '', source: 'replay' },
+        NOW,
+      );
+      // The entry survives — what broke on this domain is still worth having.
+      expect(built.ok).toBe(true);
+      if (built.ok) expect(built.entry.urlKey).toBe('');
+    }
+  });
+
+  it('keeps an ordinary path', () => {
+    const key = 'https://app.test/settings/billing/invoices';
+    expect(safeStorableUrlKey(key)).toBe(key);
+    const built = buildFailureEntry(
+      { urlKey: key, what: 'step 2', cause: 'no element matched', tryInstead: '', source: 'replay' },
+      NOW,
+    );
+    expect(built.ok).toBe(true);
+    if (built.ok) expect(built.entry.urlKey).toBe(key);
+  });
+
+  it('does not refuse hyphenated selectors or path-like prose as secrets', () => {
+    // The long-token rule used to include `/` and match any 24-character run,
+    // which cost real failure knowledge to protect nothing.
+    for (const prose of [
+      'clicking .checkout-form/submit did nothing',
+      'no element matched submit-button-primary-large',
+      'the confirm-order-summary-panel never appeared',
+    ]) {
+      expect(
+        buildFailureEntry(
+          { urlKey: 'https://app.test/cart', what: 'step 2', cause: prose, tryInstead: '', source: 'replay' },
+          NOW,
+        ).ok,
+      ).toBe(true);
+    }
+    // A real token is still refused.
+    expect(
+      buildNoteEntry('the header is Bearer QUJDREVGR0hJSktMTU5PUFFSU1RVVld', NOW).ok,
+    ).toBe(false);
+  });
+
+  it('hashes an entry id stably for the same input', () => {
+    // Guards the separator: siteEntryId joins parts with a literal character,
+    // and changing which one re-hashes every id on disk, silently splitting
+    // every existing entry into a duplicate instead of compounding it.
+    expect(siteEntryId(['https://app.test/cart', 'step 2', 'no element matched'])).toBe(
+      siteEntryId(['https://app.test/cart', 'step 2', 'no element matched']),
+    );
+    expect(siteEntryId(['a', 'b'])).not.toBe(siteEntryId(['b', 'a']));
+    expect(siteEntryId(['ab', 'c'])).not.toBe(siteEntryId(['a', 'bc']));
   });
 });

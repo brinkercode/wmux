@@ -198,4 +198,30 @@ describe('browser.siteMemory RPC', () => {
     expect(store.refusedEntries()).toBe(1);
     expect(store.get('ws-1', 'example.com')).toBeNull();
   });
+  it('normalises the urlKey itself rather than trusting the caller', async () => {
+    const router = register(true);
+    await dispatch(
+      router,
+      'browser.siteMemory.record',
+      // A caller that sends a raw href, query string and all.
+      { ...FAILURE, urlKey: 'https://example.com/login/?next=/admin&token=abc123#top' },
+      operatorCtx(),
+    );
+    const record = store.get('ws-1', 'example.com');
+    expect(record?.failures[0]?.urlKey).toBe('https://example.com/login');
+  });
+
+  it('stores no urlKey at all when the path is a magic link', async () => {
+    const router = register(true);
+    await dispatch(
+      router,
+      'browser.siteMemory.record',
+      { ...FAILURE, urlKey: 'https://example.com/reset/QUJDREVGR0hJSktMTU5PUFFSU1RVVld' },
+      operatorCtx(),
+    );
+    const record = store.get('ws-1', 'example.com');
+    // The failure is kept; the page it happened on is not storable.
+    expect(record?.failures).toHaveLength(1);
+    expect(record?.failures[0]?.urlKey).toBe('');
+  });
 });

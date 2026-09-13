@@ -21,7 +21,7 @@ import {
   recordPromotedRun,
   toPromotedSlug,
 } from '../../../shared/browserReplay/promotedSkill';
-import { stepsFingerprint } from '../../../shared/browserReplay/actionTrace';
+import { normalizeUrlKey, stepsFingerprint } from '../../../shared/browserReplay/actionTrace';
 import { HumanBehavior } from '../../browser-session/HumanBehavior';
 import { approachPath, defaultStartPoint, type Point } from '../../../shared/pointerPath';
 import {
@@ -1164,7 +1164,14 @@ export function registerBrowserRpc(
     const source = params['source'];
     const built = buildFailureEntry(
       {
-        urlKey: typeof params['urlKey'] === 'string' ? params['urlKey'] : '',
+        // Normalised HERE, never trusted from the caller. The store's whole
+        // reason for believing a urlKey carries no credential is that
+        // normalizeUrlKey dropped the query and the userinfo — and a caller
+        // that simply sends a raw href would defeat that by handing over a
+        // string those rules were never applied to. The path is screened
+        // separately, by safeStorableUrlKey inside buildFailureEntry.
+        urlKey:
+          typeof params['urlKey'] === 'string' ? normalizeUrlKey(params['urlKey']) : '',
         what: typeof params['what'] === 'string' ? params['what'] : '',
         cause: typeof params['cause'] === 'string' ? params['cause'] : '',
         tryInstead: typeof params['tryInstead'] === 'string' ? params['tryInstead'] : '',
