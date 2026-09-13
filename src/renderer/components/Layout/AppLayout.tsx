@@ -374,6 +374,7 @@ function buildSessionData(dumped: Map<string, boolean>): SessionData {
     coldParkEnabled: state.coldParkEnabled,
     browserLightweightMode: state.browserLightweightMode,
     browserDiscardHidden: state.browserDiscardHidden,
+    siteMemoryEnabled: state.siteMemoryEnabled,
     startupDirectory: state.startupDirectory || undefined,
     scrollbackLines: state.scrollbackLines,
     scrollbackRestoreEnabled: state.scrollbackRestoreEnabled,

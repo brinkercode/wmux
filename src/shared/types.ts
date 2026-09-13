@@ -835,6 +835,14 @@ export interface SessionData {
    */
   browserDiscardHidden?: boolean;
   /**
+   * Per-site procedural memory ("browser.siteMemory.enabled" in the UI).
+   *
+   * Default ON, so absent is read as enabled (`!== false`) and only an
+   * explicit false opts out. Flat and camelCase because that is what this
+   * interface is — the dotted name exists only as a label.
+   */
+  siteMemoryEnabled?: boolean;
+  /**
    * Issue #175: global default starting directory for new terminals.
    * Empty/unset → os.homedir(). Per-workspace profile.startupCwd overrides.
    */

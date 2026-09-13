@@ -944,6 +944,8 @@ export const en = {
   'settings.browserLightweightDesc': 'Throttle CPU usage of built-in browser panes that are not visible (hidden workspaces, zoomed-away panes, minimized window). Automation (MCP/screenshots) still runs full-speed. Reduces CPU only, not memory.',
   'settings.browserDiscard': 'Discard hidden browsers (frees memory)',
   'settings.browserDiscardDesc': 'After a browser pane stays invisible for 5 minutes, unload it entirely to reclaim its memory. The page reloads when you return (scroll position and unsaved form input are lost). Panes playing audio are never discarded; automation wakes a discarded pane automatically.',
+  'settings.siteMemory': 'Per-site memory',
+  'settings.siteMemoryDesc': 'Remember what went wrong on a site — a replay that stopped, a host that would not load — and mention it the next time the browser lands there. Stored per workspace, one file per domain, and forgotten after 60 days without a repeat. Turning this off stops both recording and reminding; anything already recorded can still be deleted.',
   'settings.updates': 'Updates',
   'settings.wmuxUpdates': 'wmux updates',
   'settings.updateFailed': 'Failed to check for updates',

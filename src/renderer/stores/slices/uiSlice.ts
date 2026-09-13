@@ -305,6 +305,12 @@ export interface UISlice {
   browserDiscardHidden: boolean;
   setBrowserDiscardHidden: (enabled: boolean) => void;
 
+  // Per-site procedural memory (default ON). What the browser tools learned
+  // failed on a domain is volunteered on the next landing there; off, nothing
+  // is recorded and nothing is served.
+  siteMemoryEnabled: boolean;
+  setSiteMemoryEnabled: (enabled: boolean) => void;
+
   // #517 backend choice (default 'builtin'). NON-PERSISTED renderer mirror:
   // main owns the authoritative value (userData JSON, read synchronously at
   // boot) and Settings writes it back via IPC. This field exists only so the
@@ -1149,6 +1155,14 @@ export const createUISlice: StateCreator<StoreState, [['zustand/immer', never]],
 
   setBrowserDiscardHidden: (enabled) => set((state) => {
     state.browserDiscardHidden = enabled;
+  }),
+
+  // Default ON: the feature only ever records what already went wrong, and a
+  // default-off memory is one nobody discovers.
+  siteMemoryEnabled: true,
+
+  setSiteMemoryEnabled: (enabled) => set((state) => {
+    state.siteMemoryEnabled = enabled;
   }),
 
   // #517 backend choice — mirror of main's authoritative value. Read

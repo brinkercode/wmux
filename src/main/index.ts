@@ -114,6 +114,7 @@ import { ChromeProfileStore } from './browser-session/ChromeProfileStore';
 import { ChromeSurfaceStore } from './browser-session/ChromeSurfaceStore';
 import { getActionCacheStore } from './browser-session/ActionCacheStore';
 import { getPromotedSkillStore } from './browser-session/PromotedSkillStore';
+import { getSiteMemoryStore } from './browser-session/SiteMemoryStore';
 import { isBrowserBackend } from '../shared/browserBackend';
 import { DaemonClient, getDaemonPipeName, readDaemonAuthToken } from './DaemonClient';
 import { raceDaemonShutdown } from './daemonShutdownRace';
@@ -480,6 +481,24 @@ void app.whenReady().then(() => { try { warnOnInstallIntegrityGap(); } catch { /
 // lastRunAt, so a missed sweep only ever postpones a decision.
 const PROMOTED_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Per-site memory expires on its own ladder, and this timer is the ONLY thing
+ * that carries it out.
+ *
+ * The store's read paths drop stale ENTRIES in memory, which is enough to stop
+ * serving them but never removes the file. Without this registration the
+ * 180-day delete would simply never happen and an abandoned domain's record
+ * would sit on disk forever.
+ */
+function sweepSiteMemory(): void {
+  void getSiteMemoryStore()
+    .sweep()
+    .then(({ removed }) => {
+      if (removed > 0) console.log(`[Main] site memory swept: ${removed} record(s) deleted`);
+    })
+    .catch((err) => console.warn('[Main] site memory sweep failed:', err));
+}
+
 function sweepPromotedSkills(): void {
   void getPromotedSkillStore()
     .sweep()
@@ -498,6 +517,12 @@ void app.whenReady().then(() => {
   const timer = setInterval(sweepPromotedSkills, PROMOTED_SWEEP_INTERVAL_MS);
   // Housekeeping must never be the reason the process stays alive.
   timer.unref?.();
+  // Same boot-plus-timer shape, for the same reason: a machine that is quit
+  // every evening would never reach a timer-only sweep, and one left up for
+  // months would never reach a boot-only one.
+  sweepSiteMemory();
+  const siteTimer = setInterval(sweepSiteMemory, PROMOTED_SWEEP_INTERVAL_MS);
+  siteTimer.unref?.();
 });
 
 const rpcRouter = new RpcRouter();
@@ -846,6 +871,9 @@ registerBrowserRpc(
   // lazy so registration does not depend on where the mode is resolved.
   () => enforcementMode,
   chromeRegistry,
+  // Per-site memory's on/off switch, judged in the RPC handler because the
+  // MCP process cannot read session settings. Targeted read, lazy per call.
+  () => sessionManager.readSiteMemoryEnabled(),
 );
 registerA2aRpc(rpcRouter, () => mainWindow, claudeWorker, { getDaemonClient: () => daemonClient });
 registerA2aChannelRpc(rpcRouter, () => daemonClient, () => mainWindow);

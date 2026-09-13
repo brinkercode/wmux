@@ -1221,6 +1221,10 @@ export const createWorkspaceSlice: StateCreator<StoreState, [['zustand/immer', n
       if (typeof data.browserDiscardHidden === 'boolean') {
         state.browserDiscardHidden = data.browserDiscardHidden;
       }
+      // Default ON; only an explicit persisted false opts out.
+      if (typeof data.siteMemoryEnabled === 'boolean') {
+        state.siteMemoryEnabled = data.siteMemoryEnabled;
+      }
       let retentionMigrationApplied = false;
       if (typeof data.hiddenPaneRetentionEnabled === 'boolean') {
         if (data.hiddenPaneRetentionEnabled === false && !retentionMigrationDone()) {

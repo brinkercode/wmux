@@ -403,6 +403,9 @@ export type RpcMethod =
   | 'browser.actionCache.promote'
   | 'browser.actionCache.demote'
   | 'browser.actionCache.promoted'
+  | 'browser.siteMemory.list'
+  | 'browser.siteMemory.record'
+  | 'browser.siteMemory.forget'
   | 'browser.lease.acquire'
   | 'browser.lease.renew'
   | 'browser.lease.release'
@@ -617,6 +620,9 @@ export const ALL_RPC_METHODS = [
   'browser.actionCache.promote',
   'browser.actionCache.demote',
   'browser.actionCache.promoted',
+  'browser.siteMemory.list',
+  'browser.siteMemory.record',
+  'browser.siteMemory.forget',
   'browser.lease.acquire',
   'browser.lease.renew',
   'browser.lease.release',

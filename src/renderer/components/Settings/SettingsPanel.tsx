@@ -2256,6 +2256,8 @@ function TabTerminal() {
   const setBrowserLightweightMode = useStore((s) => s.setBrowserLightweightMode);
   const browserDiscardHidden = useStore((s) => s.browserDiscardHidden);
   const setBrowserDiscardHidden = useStore((s) => s.setBrowserDiscardHidden);
+  const siteMemoryEnabled = useStore((s) => s.siteMemoryEnabled);
+  const setSiteMemoryEnabled = useStore((s) => s.setSiteMemoryEnabled);
   const browserBackend = useStore((s) => s.browserBackend);
   const setBrowserBackend = useStore((s) => s.setBrowserBackend);
   const browserBackendHydrated = useStore((s) => s.browserBackendHydrated);
@@ -2413,6 +2415,13 @@ function TabTerminal() {
             />
           </SettingRow>
         )}
+        <SettingRow id="sitememory" label={t('settings.siteMemory')} description={t('settings.siteMemoryDesc')}>
+          <Toggle
+            checked={siteMemoryEnabled}
+            onChange={setSiteMemoryEnabled}
+            label={t('settings.siteMemory')}
+          />
+        </SettingRow>
         <SettingRow id="scrollback" label={t('settings.scrollbackLines')} description={t('settings.scrollbackDesc')}>
           <SettingNumberInput
             label={t('settings.scrollbackLines')}

@@ -10,6 +10,11 @@ import {
 import { PortAllocator } from '../../browser-session/PortAllocator';
 import { getActionCacheStore } from '../../browser-session/ActionCacheStore';
 import { getPromotedSkillStore } from '../../browser-session/PromotedSkillStore';
+import { getSiteMemoryStore } from '../../browser-session/SiteMemoryStore';
+import {
+  buildFailureEntry,
+  buildNoteEntry,
+} from '../../../shared/browserMemory/siteMemory';
 import {
   buildPromotedRecord,
   promoteBlockedReason,
@@ -664,6 +669,12 @@ export function registerBrowserRpc(
   // a workspace-binding registry. Optional so older wirings/tests keep
   // working; chrome-mode calls without it fail with a clear message.
   chromeRegistry?: ChromeLauncherRegistry,
+  // The persisted `siteMemoryEnabled` toggle, read lazily per call (the
+  // SessionManager targeted-read pattern). The MCP process is a separate
+  // process and cannot see session settings, so this — the RPC handler — is
+  // the ONE place the flag is judged. Absent hook or null value means the
+  // default, which is ON.
+  readSiteMemoryEnabled: () => boolean | null = () => null,
 ): void {
   const getActivePartition = (): string => profileManager.getActiveProfile().partition;
 
@@ -1101,6 +1112,85 @@ export function registerBrowserRpc(
       ? promotedSkills.listForUrlKey(workspaceId, urlKey)
       : promotedSkills.list(workspaceId);
     return { promoted: records };
+  });
+
+  // ── Per-site procedural memory ──────────────────────────────────────────
+  //
+  // Same fail-closed cacheWorkspace() gate as the cache and the promoted
+  // store: a caller whose workspace wmux did not itself resolve gets nothing.
+  // The store holds what went wrong on a domain, and serving one workspace's
+  // record to another would hand an agent another agent's browsing history.
+
+  const siteMemory = getSiteMemoryStore();
+  /** Default ON: only an explicit persisted false turns the feature off. */
+  const siteMemoryOn = (): boolean => readSiteMemoryEnabled() !== false;
+
+  router.register('browser.siteMemory.list', async (params, ctx) => {
+    const workspaceId = cacheWorkspace('browser.siteMemory.list', params, ctx);
+    // OFF serves nothing — the hint pipe's whole input is this call, so an
+    // empty result IS the feature being off.
+    if (!siteMemoryOn()) return { records: [], memory: null };
+    const domain = typeof params['domain'] === 'string' ? params['domain'] : undefined;
+    if (!domain) return { records: siteMemory.list(workspaceId), memory: null };
+    return { records: [], memory: siteMemory.get(workspaceId, domain) };
+  });
+
+  router.register('browser.siteMemory.record', async (params, ctx) => {
+    const workspaceId = cacheWorkspace('browser.siteMemory.record', params, ctx);
+    // OFF is a SILENT no-op, not an error. Every write hook here is
+    // fire-and-forget with a `.catch(() => {})`, so an error would be consumed
+    // by nobody and would only ever show up as a puzzling log line.
+    if (!siteMemoryOn()) return { ok: true, skipped: true };
+    const domain = typeof params['domain'] === 'string' ? params['domain'] : '';
+    if (!domain) return { ok: false, reason: 'no domain' };
+    const kind = typeof params['kind'] === 'string' ? params['kind'] : 'failure';
+    const now = Date.now();
+
+    if (kind === 'success') {
+      // Counter only, and never allowed to create a file: see recordSuccess.
+      return { ok: await siteMemory.recordSuccess(workspaceId, domain, now) };
+    }
+    if (kind === 'note') {
+      const built = buildNoteEntry(params['note'], now);
+      if (!built.ok) {
+        if (built.reason !== 'empty') siteMemory.noteRefusal(built.reason);
+        return { ok: false, reason: built.reason };
+      }
+      return {
+        ok: await siteMemory.recordNote(workspaceId, domain, built.entry, now),
+        entryId: built.entry.id,
+      };
+    }
+    const source = params['source'];
+    const built = buildFailureEntry(
+      {
+        urlKey: typeof params['urlKey'] === 'string' ? params['urlKey'] : '',
+        what: typeof params['what'] === 'string' ? params['what'] : '',
+        cause: typeof params['cause'] === 'string' ? params['cause'] : '',
+        tryInstead: typeof params['tryInstead'] === 'string' ? params['tryInstead'] : '',
+        source: source === 'navigate' || source === 'agent' ? source : 'replay',
+      },
+      now,
+    );
+    if (!built.ok) {
+      if (built.reason !== 'empty') siteMemory.noteRefusal(built.reason);
+      return { ok: false, reason: built.reason };
+    }
+    return {
+      ok: await siteMemory.recordFailure(workspaceId, domain, built.entry, now),
+      entryId: built.entry.id,
+    };
+  });
+
+  router.register('browser.siteMemory.forget', async (params, ctx) => {
+    const workspaceId = cacheWorkspace('browser.siteMemory.forget', params, ctx);
+    // Deliberately NOT gated on the flag. Someone who turns the feature off
+    // must still be able to delete what it recorded before they did — a
+    // forget that only worked while recording was enabled would be a trap.
+    const domain = typeof params['domain'] === 'string' ? params['domain'] : '';
+    if (!domain) return { removed: 0 };
+    const entryId = typeof params['entryId'] === 'string' ? params['entryId'] : undefined;
+    return siteMemory.forget(workspaceId, domain, entryId);
   });
 
   // ── Automation lease RPC (#517) ─────────────────────────────────────────

@@ -1094,6 +1094,8 @@ export const zh = {
   'settings.browserLightweightDesc': '降低不可见内置浏览器面板（隐藏工作区、被缩放的面板、最小化窗口）的 CPU 用量。自动化（MCP/截图）仍全速运行。只降低 CPU，不降低内存。',
   'settings.browserDiscard': '丢弃隐藏浏览器（释放内存）',
   'settings.browserDiscardDesc': '浏览器面板保持不可见 5 分钟后，将其整体卸载以回收内存。返回时页面会重新加载（滚动位置和未保存的表单输入会丢失）。播放音频的面板永不被丢弃；自动化会自动唤醒被丢弃的面板。',
+  'settings.siteMemory': '站点记忆',
+  'settings.siteMemoryDesc': '记住某个站点上出过什么问题——中断的重放、打不开的主机——并在浏览器下次到达那里时提醒你。按工作区存储，每个域名一个文件，60 天内没有再次出现就会遗忘。关闭后将同时停止记录和提醒；已记录的内容仍可删除。',
   'settings.fontFamilyPlaceholder': '输入或选择字体…',
   'settings.fontCustom': '自定义字体…',
   'settings.fontCustomPlaceholder': '字体名称（例如 JetBrainsMonoHangul）',

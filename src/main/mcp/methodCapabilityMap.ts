@@ -334,6 +334,13 @@ export const METHOD_CAPABILITY: Record<RpcMethod, RequiredCapability> = {
   'browser.actionCache.promote':{ capability: 'browser.click', riskClass: 'browser' },
   'browser.actionCache.demote': { capability: 'browser.click', riskClass: 'browser' },
   'browser.actionCache.promoted':{ capability: 'browser.read', riskClass: 'browser' },
+  // Per-site memory. Same split as the cache: reading what a site did to a
+  // previous run is `browser.read`; writing or deleting it reuses
+  // `browser.click`, because a caller that can already drive the page can
+  // produce every failure this store records.
+  'browser.siteMemory.list':   { capability: 'browser.read',  riskClass: 'browser' },
+  'browser.siteMemory.record': { capability: 'browser.click', riskClass: 'browser' },
+  'browser.siteMemory.forget': { capability: 'browser.click', riskClass: 'browser' },
 
   // Lease methods pin a guest at full speed (or strip that exemption from a
   // real automation op), i.e. they mutate the app's resource policy — a

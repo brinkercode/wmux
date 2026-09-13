@@ -473,6 +473,8 @@ export const ko = {
   'settings.browserLightweightDesc': '보이지 않는 내장 브라우저 패널(숨은 워크스페이스, 줌으로 가려진 패널, 최소화된 창)의 CPU 사용을 제한합니다. 자동화(MCP/스크린샷)는 계속 전속력으로 동작합니다. CPU만 절감되며 메모리는 줄지 않습니다.',
   'settings.browserDiscard': '숨은 브라우저 내리기 (메모리 절감)',
   'settings.browserDiscardDesc': '브라우저 패널이 5분 동안 보이지 않으면 완전히 내려 메모리를 회수합니다. 돌아오면 페이지가 다시 로드됩니다(스크롤 위치와 저장하지 않은 입력은 사라집니다). 오디오 재생 중인 패널은 내리지 않으며, 자동화는 내려간 패널을 자동으로 깨웁니다.',
+  'settings.siteMemory': '사이트별 기억',
+  'settings.siteMemoryDesc': '사이트에서 무엇이 잘못됐는지 — 중단된 리플레이, 열리지 않는 호스트 — 기억해 두었다가 다음에 그곳에 도착하면 알려줍니다. 워크스페이스별로 도메인당 파일 하나에 저장하고, 60일 동안 다시 겪지 않으면 잊습니다. 끄면 기록과 알림이 모두 멈추지만 이미 기록된 것은 그대로 삭제할 수 있습니다.',
   'settings.updates': '업데이트',
   'settings.wmuxUpdates': 'wmux 업데이트',
   'settings.updateFailed': '업데이트 확인 실패',

@@ -253,6 +253,12 @@ export const FIRST_PARTY_METHODS: ReadonlySet<RpcMethod> = new Set<RpcMethod>([
   'browser.actionCache.promote',
   'browser.actionCache.demote',
   'browser.actionCache.promoted',
+  // Per-site memory. Registered here for the same reason the actionCache
+  // methods are: missing from this list, every call would be refused as an
+  // unconfirmed plugin in a packaged build while every dev build looked fine.
+  'browser.siteMemory.list',
+  'browser.siteMemory.record',
+  'browser.siteMemory.forget',
   // agent-to-agent
   'a2a.resolve.identity',
   'a2a.whoami',
