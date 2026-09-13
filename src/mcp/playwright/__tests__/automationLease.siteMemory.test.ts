@@ -11,6 +11,7 @@ vi.mock('../../wmux-client', () => ({
 
 import { withAutomationLease } from '../automationLease';
 import {
+  SITE_HINT_HEADER,
   SITE_HINT_MAX_BYTES,
   SITE_HINT_MAX_LINES,
   emptySiteMemoryRecord,
@@ -105,9 +106,11 @@ describe('site memory hints on navigation', () => {
     );
     const result = await withAutomationLease(deps, 's1', body);
     const block = result.content[0].text as string;
-    expect(block).toContain('[site]');
     expect(Buffer.byteLength(block, 'utf8')).toBeLessThanOrEqual(SITE_HINT_MAX_BYTES);
-    expect(block.trimEnd().split('\n').length).toBeLessThanOrEqual(SITE_HINT_MAX_LINES + 1);
+    // One fixed header line, then at most SITE_HINT_MAX_LINES content lines.
+    const lines = block.trimEnd().split('\n');
+    expect(lines[0]).toBe(SITE_HINT_HEADER);
+    expect(lines.length - 1).toBeLessThanOrEqual(SITE_HINT_MAX_LINES);
   });
 
   it('injects when there are no recorded flows at all', async () => {
