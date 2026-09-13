@@ -48,6 +48,9 @@ export const COMMANDER_TOOL_SURFACE: readonly string[] = [
   // Read / observe.
   'pane_list',
   'pane_get_metadata',
+  // Merged pane_metadata {action} tool; pane_get/pane_set_metadata stay
+  // registered (callable) but unlisted from tools/list — see unlistedTools.ts.
+  'pane_metadata',
   'surface_list',
   'workspace_list',
   'terminal_read',

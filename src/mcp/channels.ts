@@ -340,7 +340,7 @@ export function createChannelToolCatalog(deps: ChannelToolDeps) {
   const channelPost = defineWmuxTool({
     name: 'channel_post',
     description:
-      'Post a message to a channel. A post is a NOTIFICATION, not a delivery: it does NOT start an idle agent\'s turn, so instructions can sit unread indefinitely while the sender reads the silence as "still working". To make an agent act, send it a task (a2a_task_send, pasted into its prompt) or @-mention it with `pane_id` set. Check `droppedMentions` on the result — a mention that did not land is reported there, never silently dropped.',
+      'Post a message to a channel. A post is a NOTIFICATION, not a delivery: it does NOT start an idle agent\'s turn, so instructions can sit unread indefinitely while the sender reads the silence as "still working". To make an agent act, send it a task (send_message, pasted into its prompt) or @-mention it with `pane_id` set. Check `droppedMentions` on the result — a mention that did not land is reported there, never silently dropped.',
     inputSchema: CHANNEL_POST_SHAPE,
     profiles: ['full', 'core', 'commander'],
     invoke: async ({ channel_id, text, member_id, member_name, client_msg_id, mentions }) => {

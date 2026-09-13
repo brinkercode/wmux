@@ -191,8 +191,11 @@ describe('pane_set_metadata — no cross-workspace override (write path stays ow
   const src = fs.readFileSync(path.join(__dirname, '..', 'index.ts'), 'utf-8');
 
   it('keeps forcing the caller\'s own workspace, with no workspaceId parameter at all', () => {
-    const block = src.match(/'pane_set_metadata',[\s\S]*?callRpc\('pane\.setMetadata', params\);/)?.[0];
-    if (!block) throw new Error('pane_set_metadata registration not found in mcp/index.ts');
+    // The write path lives in the shared `paneSetMetadata` const (both the
+    // pre-merge pane_set_metadata tool and the merged pane_metadata {action}
+    // tool call it, so locking the const locks both spellings).
+    const block = src.match(/const paneSetMetadata = async \(\{[\s\S]*?callRpc\('pane\.setMetadata', params\);/)?.[0];
+    if (!block) throw new Error('paneSetMetadata handler not found in mcp/index.ts');
     expect(block).toMatch(/const workspaceId = await requireWorkspaceId\(\);/);
     expect(block).not.toMatch(/targetWorkspaceId/);
   });

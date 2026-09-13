@@ -310,7 +310,7 @@ export function createBrowserBridge(
         .join('; ');
       return {
         ok: false,
-        error: `browser.${name}: invalid arguments — ${issues}`,
+        error: `browser.${name}: invalid arguments — ${issues} (valid: ${Object.keys(collected.shape).join(', ')})`,
         ledger: ledgerFor(args, 'INVALID'),
       };
     }

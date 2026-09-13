@@ -268,7 +268,11 @@ describe('MCP workspace routing (source-level invariants)', () => {
     // via the fail-soft resolveScopedReadWorkspaceId ('' on an unresolvable
     // identity → the builtin path never throws), never requireWorkspaceId nor the
     // raw weak resolver.
-    const block = toolBlock('browser_session_status');
+    // The logic lives in the shared `browserSessionStatus` const (both the
+    // pre-merge browser_session_status tool and the merged browser_session
+    // {action:'status'} call it), so the invariant locks the const.
+    const block = src.match(/const browserSessionStatus = async \(\) => \{[\s\S]*?callRpc\('browser\.session\.status'/)?.[0];
+    if (!block) throw new Error('browserSessionStatus handler not found in mcp/index.ts');
     expect(block).toMatch(/resolveScopedReadWorkspaceId\(\)/);
     expect(block).not.toMatch(/requireWorkspaceId\(\)/);
     expect(block).not.toMatch(/resolveWorkspaceId\(\)/);

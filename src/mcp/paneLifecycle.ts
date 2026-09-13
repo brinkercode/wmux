@@ -102,6 +102,10 @@ const SURFACE_CLOSE_SHAPE = {
 
 const PANE_STASH_SHAPE = {
   paneId: z.string().describe('Leaf pane id (pane_list).'),
+  restore: z
+    .boolean()
+    .optional()
+    .describe('true to put a stashed pane back into the layout instead (the pane_unstash action). Idempotent: an already-visible pane is success.'),
 };
 
 const PANE_UNSTASH_SHAPE = {
@@ -191,10 +195,11 @@ export function createPaneLifecycleToolCatalog(
     defineWmuxTool({
       name: 'pane_stash',
       description:
-        'Take a leaf pane out of the layout without killing it. The session keeps running, so terminal_send / terminal_read / pane_close / A2A still reach it; pane_focus is refused with PANE_STASHED naming pane_unstash. Refusals explain themselves.',
+        'Take a leaf pane out of the layout without killing it, or put one back with restore:true. The session keeps running, so terminal_send / terminal_read / pane_close / A2A still reach it; pane_focus is refused with PANE_STASHED naming pane_stash {restore:true}. restore is idempotent: an already-visible pane is success, so the retry PANE_STASHED asks for is always safe. Refusals explain themselves.',
       inputSchema: PANE_STASH_SHAPE,
       profiles: ['full', 'core', 'commander'],
-      invoke: async ({ paneId }) => callRpc('pane.stash', { id: paneId }),
+      invoke: async ({ paneId, restore }) =>
+        callRpc(restore ? 'pane.unstash' : 'pane.stash', { id: paneId }),
     }),
 
     defineWmuxTool({

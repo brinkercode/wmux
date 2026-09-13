@@ -47,6 +47,9 @@ export const CORE_TOOL_SURFACE: readonly string[] = [
   'pane_list',
   'pane_set_metadata',
   'pane_get_metadata',
+  // Merged pane_metadata {action} tool; the two names above stay registered
+  // (callable) but are unlisted from tools/list — see unlistedTools.ts.
+  'pane_metadata',
   'wmux_search_panes',
   'wmux_events_poll',
   'a2a_whoami',

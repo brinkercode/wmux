@@ -15,7 +15,7 @@ An agent acts when text lands in its prompt. Exactly three things put it there:
 
 | You send | Reaches an idle agent's prompt? |
 |---|---|
-| `a2a_task_send` (a.k.a. `send_message`) | **Yes** — pasted as a one-line nudge, unless `silent: true` |
+| `send_message` (a.k.a. the unlisted `a2a_task_send` alias) | **Yes** — pasted as a one-line nudge, unless `silent: true` |
 | `channel_post` with a mention carrying `pane_id` | **Yes** — pasted at that pane's next idle moment |
 | `channel_post` — anything else, including a mention of a *workspace* | **No** — unread badge only |
 
@@ -38,7 +38,7 @@ a reply that was never triggered. Both sides are behaving correctly.
 **Handing out work → send a task.**
 
 ```
-a2a_task_send(to: "<workspace>", title: "…", message: "…")
+send_message(to: "<workspace>", title: "…", message: "…")
 ```
 
 **Pinging a specific agent in a channel → pin its pane.**

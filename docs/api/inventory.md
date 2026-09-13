@@ -173,8 +173,9 @@ The surface a server registers is chosen once, by a launch argument in the host 
 | MCP tool | Backs RPC method | Notes |
 |---|---|---|
 | `pane_list` | `pane.list` | Returns the snapshot envelope `{ asOfSeq, bootId, panes }`. |
-| `pane_get_metadata` | `pane.getMetadata` | |
-| `pane_set_metadata` | `pane.setMetadata` | The substrate write entrypoint. |
+| `pane_metadata` | `pane.getMetadata` / `pane.setMetadata` | Merged `{action: get\|set}` form of the pane metadata read/write. `get` accepts the cross-workspace `workspaceId` override; `set` is the substrate write entrypoint. |
+| `pane_get_metadata` | `pane.getMetadata` | Unlisted pre-merge alias of `pane_metadata {action:'get'}` — still callable via `tools/call` for one release. |
+| `pane_set_metadata` | `pane.setMetadata` | Unlisted pre-merge alias of `pane_metadata {action:'set'}` — still callable via `tools/call` for one release. |
 | `workspace_list` | `workspace.list` | |
 | `surface_list` | `surface.list` | |
 | `pane_split` | `pane.split` | Split a leaf pane (CREATE family — optional `workspaceId`, defaults to the caller's own; `direction` defaults to `horizontal`). Issue #285. |
@@ -182,15 +183,15 @@ The surface a server registers is chosen once, by a launch argument in the host 
 | `pane_focus` | `pane.focus` | Focus a leaf pane by `paneId` — **non-yank** (does not switch the on-screen workspace; use `workspace.focus` for that). Issue #285. |
 | `surface_new` | `surface.new` | Open a new surface (CREATE family — optional `workspaceId`/`shell`/`cwd`, defaults to the caller's own workspace). Issue #285. |
 | `surface_close` | `surface.close` | Close a surface by globally-unique `surfaceId` (resolved across all workspaces). Issue #285. |
-| `pane_stash` | `pane.stash` | Take a leaf pane out of the layout, keeping its session running. Issue #977. |
-| `pane_unstash` | `pane.unstash` | Put a stashed pane back. Idempotent — the remedy named by every `PANE_STASHED` error. Issue #977. |
+| `pane_stash` | `pane.stash` / `pane.unstash` | Take a leaf pane out of the layout, keeping its session running; `restore: true` puts a stashed pane back (idempotent — the remedy named by every `PANE_STASHED` error). Issue #977. |
+| `pane_unstash` | `pane.unstash` | Unlisted pre-merge alias of `pane_stash {restore:true}` — still callable via `tools/call` for one release. |
 | `terminal_read` | `input.readScreen` | |
 | `terminal_read_events` | `terminal.readEvents` | Structured prompt-detected events. |
 | `terminal_send` | `input.send` | |
 | `terminal_send_key` | `input.sendKey` | |
 | `wmux_events_poll` | `events.poll` | Pull-based event stream. |
 | `wmux_search_panes` | `pane.search` | |
-| `send_message` | inter-workspace messaging — send a message to another workspace. Backed by the same handler as `a2a_task_send` (which is registered as a literal alias). NOT `input.send` semantics. | |
+| `send_message` | inter-workspace messaging — send a message to another workspace. Backed by the same handler as `a2a_task_send` (an unlisted-but-callable literal alias). NOT `input.send` semantics. | |
 
 ### REPL surface (experimental)
 
@@ -209,7 +210,7 @@ Backed by **no RPC method**: the sessions are child processes of the MCP server 
 | `a2a_whoami` | `a2a.whoami` | Reports the calling workspace's identity (envelope-pinned). |
 | `a2a_discover` | `a2a.discover` | Lists known workspaces and their advertised skills. |
 | `a2a_set_skills` | `meta.setSkills` | Registers the calling agent's skill tags. |
-| `a2a_task_send` | `a2a.task.send` | Sends a structured task to another workspace. |
+| `a2a_task_send` | `a2a.task.send` | Sends a structured task to another workspace. Unlisted literal alias of `send_message` — same handler and shape, still callable via `tools/call`; use `send_message` in new prompts. |
 | `a2a_task_query` | `a2a.task.query` | Pulls tasks by id / status / role (sender or receiver). |
 | `a2a_task_update` | `a2a.task.update` | Transitions a task to working / completed / failed / input-required. |
 | `a2a_task_cancel` | `a2a.task.cancel` | Cancels a task you sent (sender-only). |
@@ -244,7 +245,7 @@ Two of the six have a direct workspace-level equivalent. The other four do not �
 | MCP tool family | Count | Notes |
 |---|---|---|
 | `browser_tabs` | 1 | Manages logical browser surfaces only in the calling session's workspace. `list`/`new` return stable opaque `surfaceId` values used by `select`/`close`; the former experimental numeric `tabId` index is no longer accepted. |
-| Other `browser_*` tools (open, close, navigate, navigate_back, screenshot, fill, type, click, hover, drag, press_key, scroll, scroll_into_view, snapshot, smart_snapshot, console, cookies, dialog, download, evaluate, extract_data, extract_text, file_upload, highlight, network, pdf, resize, response_body, select, session_list, session_start, session_status, session_stop, storage, trace, wait, wait_for_download, emulate) | ~39 | Wire shapes may evolve before v3.0. Backs Claude Code / Codex / Gemini CLI browser-control use cases. |
+| Other `browser_*` tools (open, close, navigate, navigate_back, screenshot, fill, type, click, hover, drag, press_key, scroll, scroll_into_view, snapshot, smart_snapshot, console, cookies, dialog, download, evaluate, extract_data, extract_text, file_upload, highlight, network, pdf, resize, response_body, select, session, storage, trace, wait, wait_for_download, emulate) | ~31 listed | Wire shapes may evolve before v3.0. Backs Claude Code / Codex / Gemini CLI browser-control use cases. `browser_session {action}` merges the four `browser_session_*` tools (unlisted but callable for one release), and the seven `browser_repl` sub-steps (`navigate_back`, `hover`, `drag`, `select`, `scroll_into_view`, `highlight`, `dialog`) are likewise unlisted but callable — inside a `browser_repl` snippet they remain `await browser.X(args)` with the argument cheat sheet in that tool's description. |
 
 ---
 

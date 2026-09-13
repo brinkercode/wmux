@@ -241,6 +241,7 @@ export const DEFAULT_ALLOWED_TOOLS: string[] = [
   // Read / observe — the whole family.
   WMUX('pane_list'),
   WMUX('pane_get_metadata'),
+  WMUX('pane_metadata'),
   WMUX('surface_list'),
   WMUX('workspace_list'),
   WMUX('terminal_read'),
