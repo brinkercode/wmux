@@ -1349,7 +1349,19 @@ server.tool(
     mergeMode: z.enum(['merge', 'replace', 'replaceShared']).optional().describe('set only: merge semantics (default "merge").'),
     expectedVersion: z.number().int().nonnegative().optional().describe('set only: optimistic concurrency guard; a mismatch fails with VERSION_CONFLICT and does not mutate.'),
   },
-  async ({ action, ...rest }) => (action === 'set' ? paneSetMetadata(rest) : paneGetMetadata(rest)),
+  async ({ action, ...rest }) => {
+    // pane_set_metadata never took a workspaceId — the write side is
+    // calling-workspace only, and silently DROPPING one here would let a
+    // cross-workspace write look successful while hitting the caller's own
+    // pane. Reject loudly instead (the get action keeps its #1018 reach).
+    if (action === 'set' && rest.workspaceId !== undefined) {
+      throw new Error(
+        'pane_metadata: workspaceId is only valid with action:"get" — ' +
+        'set writes to the calling workspace\'s pane and takes no override.'
+      );
+    }
+    return action === 'set' ? paneSetMetadata(rest) : paneGetMetadata(rest);
+  },
 );
 
 server.tool(

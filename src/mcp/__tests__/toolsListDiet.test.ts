@@ -4,7 +4,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { z } from 'zod';
 
 /**
- * tools/list diet (#1311) — the contract the three cuts share:
+ * tools/list diet (#1302) — the contract the three cuts share:
  *
  *   1. a2a_task_send is a literal alias of send_message;
  *   2. seven browser_repl sub-steps duplicate the bridge as standalone tools;
@@ -278,6 +278,31 @@ describe('tools/list diet — merged tools produce identical results', () => {
       expect(mergedGet.isError).toBeFalsy();
       expect(oldGet.isError).toBeFalsy();
       expect(mergedGet.text).toBe(oldGet.text);
+    } finally {
+      await close();
+    }
+  });
+
+  it('pane_metadata rejects workspaceId on set — the write side takes no override', async () => {
+    const { client, close } = await connectClient();
+    try {
+      // pane_set_metadata never took a workspaceId; silently ignoring one on
+      // the merged tool would let a cross-workspace write report success
+      // while hitting the caller's own pane. It must fail loudly, and the
+      // get action keeps its cross-workspace reach.
+      const res = await callTool(client, 'pane_metadata', {
+        action: 'set',
+        workspaceId: 'ws-other',
+        paneId: 'p-1',
+        label: 'x',
+      });
+      expect(res.isError).toBe(true);
+      expect(res.text).toContain('workspaceId is only valid with action:"get"');
+      // No RPC went out for the refused call.
+      const calls = mockSendRpc.mock.calls.filter(
+        (c) => (c[0] as string) === 'pane.setMetadata',
+      );
+      expect(calls).toHaveLength(0);
     } finally {
       await close();
     }
