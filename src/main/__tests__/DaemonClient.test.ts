@@ -260,6 +260,7 @@ describe('DaemonClient', () => {
       mockServer = createMockDaemonServer(pipeName, AUTH_TOKEN, {
         'daemon.getAgentState': (params) => ({
           agentName: params['id'] === 'sess-1' ? 'Codex CLI' : null,
+          agentVerified: true,
           agentStatus: 'waiting',
           inputQuiet: true,
           inputRevision: 12,
@@ -272,11 +273,61 @@ describe('DaemonClient', () => {
       await client.connect();
       await expect(client.getAgentState('sess-1')).resolves.toEqual({
         agentName: 'Codex CLI',
+        agentVerified: true,
         agentStatus: 'waiting',
         inputQuiet: true,
         inputRevision: 12,
         incarnationId: 'incarnation-1',
       });
+
+      await client.disconnect();
+      await mockServer.stop();
+    });
+
+    it('parses agentVerified as false, never null, when an older daemon omits it (#1307)', async () => {
+      const pipeName = testPipeName('agent-state-unverified-field');
+      mockServer = createMockDaemonServer(pipeName, AUTH_TOKEN, {
+        'daemon.getAgentState': () => ({
+          agentName: 'Codex CLI',
+          agentStatus: 'waiting',
+          inputQuiet: true,
+          inputRevision: 12,
+          incarnationId: 'incarnation-1',
+        }),
+      });
+      await mockServer.start();
+
+      client = new DaemonClient(pipeName, AUTH_TOKEN);
+      await client.connect();
+      const result = await client.getAgentState('sess-1');
+      // Missing on an old daemon must parse to false, not null — a null
+      // snapshot would abort the resume path's slug/incarnation comparison
+      // entirely instead of letting it run against an unverified pane.
+      expect(result).not.toBeNull();
+      expect(result?.agentVerified).toBe(false);
+
+      await client.disconnect();
+      await mockServer.stop();
+    });
+
+    it('parses a non-boolean agentVerified as false (#1307)', async () => {
+      const pipeName = testPipeName('agent-state-nonbool-field');
+      mockServer = createMockDaemonServer(pipeName, AUTH_TOKEN, {
+        'daemon.getAgentState': () => ({
+          agentName: 'Codex CLI',
+          agentVerified: 'yes',
+          agentStatus: 'waiting',
+          inputQuiet: true,
+          inputRevision: 12,
+          incarnationId: 'incarnation-1',
+        }),
+      });
+      await mockServer.start();
+
+      client = new DaemonClient(pipeName, AUTH_TOKEN);
+      await client.connect();
+      const result = await client.getAgentState('sess-1');
+      expect(result?.agentVerified).toBe(false);
 
       await client.disconnect();
       await mockServer.stop();

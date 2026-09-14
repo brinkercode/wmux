@@ -34,10 +34,14 @@ function schedule(id: string, ptyId = 'pty-1'): SessionPromptSchedule {
   };
 }
 
-function handlers(available = true, slug: 'codex' | 'claude' | null = 'codex') {
+function handlers(
+  available = true,
+  slug: 'codex' | 'claude' | null = 'codex',
+  agentVerified = true,
+) {
   return createSessionPromptScheduleHandlers({
     available,
-    getAgentState: async () => slug ? { slug, incarnationId: 'incarnation-1' } : null,
+    getAgentState: async () => slug ? { slug, incarnationId: 'incarnation-1', agentVerified } : null,
     dir,
   });
 }
@@ -166,7 +170,7 @@ describe('session prompt schedule IPC handlers', () => {
     await saveSessionPromptSchedules([paused], dir);
     const ipc = createSessionPromptScheduleHandlers({
       available: true,
-      getAgentState: async () => ({ slug: 'codex', incarnationId: 'incarnation-2' }),
+      getAgentState: async () => ({ slug: 'codex', incarnationId: 'incarnation-2', agentVerified: true }),
       dir,
     });
 
@@ -186,6 +190,35 @@ describe('session prompt schedule IPC handlers', () => {
     await saveSessionPromptSchedules([paused], dir);
 
     await expect(handlers().update({
+      ptyId: 'pty-1',
+      id: 'paused',
+      enabled: true,
+    })).resolves.toEqual({ ok: true });
+    expect(loadSessionPromptSchedules(dir)).toEqual([
+      expect.objectContaining({ id: 'paused', enabled: true }),
+    ]);
+  });
+
+  it('refuses to schedule a live-but-unverified pane (#1307)', async () => {
+    const request = {
+      ptyId: 'pty-1',
+      agentSlug: 'codex',
+      prompt: 'continue',
+      nextRunAt: Date.now() + 60_000,
+    };
+    await expect(handlers(true, 'codex', false).create(request)).resolves.toEqual({
+      ok: false,
+      code: 'agent_unavailable',
+    });
+    expect(loadSessionPromptSchedules(dir)).toEqual([]);
+  });
+
+  it('resumes a live-but-unverified pane whose slug and incarnation still match — the #1307 regression guard', async () => {
+    const paused = schedule('paused');
+    paused.enabled = false;
+    await saveSessionPromptSchedules([paused], dir);
+
+    await expect(handlers(true, 'codex', false).update({
       ptyId: 'pty-1',
       id: 'paused',
       enabled: true,

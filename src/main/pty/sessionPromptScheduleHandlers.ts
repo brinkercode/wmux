@@ -9,7 +9,13 @@ import {
   type SessionPromptSchedule,
 } from './sessionPromptScheduleStore';
 
-type ScheduleAgentState = { slug: AgentSlug; incarnationId: string } | null;
+type ScheduleAgentState = {
+  slug: AgentSlug;
+  incarnationId: string;
+  /** #1307 — true when a live attributed process currently backs this
+   *  pane. See create() and update() below for how each uses it. */
+  agentVerified: boolean;
+} | null;
 
 export interface SessionPromptScheduleHandlerDeps {
   /** False in local/fallback mode, where process identity cannot be proven. */
@@ -52,8 +58,11 @@ export function createSessionPromptScheduleHandlers(deps: SessionPromptScheduleH
 
       // Bind only the daemon's canonical current agent. This closes both a
       // stale renderer race and hand-crafted IPC attempts to target a shell.
+      // #1307 — required here (unlike resume/update below): a fresh
+      // schedule must not bind to a pane not currently proven to run
+      // a live agent process.
       const currentAgent = await deps.getAgentState(ptyId);
-      if (!currentAgent || currentAgent.slug !== requestedSlug) {
+      if (!currentAgent || currentAgent.slug !== requestedSlug || !currentAgent.agentVerified) {
         return { ok: false, code: 'agent_unavailable' };
       }
 
@@ -115,6 +124,9 @@ export function createSessionPromptScheduleHandlers(deps: SessionPromptScheduleH
             // A paused unattended-input target is safe to resume only when the
             // daemon can positively prove that its original session still owns it.
           }
+          // #1307 — not gated on agentVerified: create() proved the binding
+          // once, and delivery re-verifies liveness on every occurrence.
+          // Gating here would wrongly mark a merely-unverified pane replaced.
           if (!currentAgent ||
             currentAgent.slug !== current.agentSlug ||
             currentAgent.incarnationId !== current.sessionIncarnationId) {

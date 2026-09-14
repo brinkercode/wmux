@@ -575,6 +575,10 @@ export class DaemonClient extends EventEmitter {
   /** Current daemon-owned agent identity and status for reconnect-safe actions. */
   async getAgentState(sessionId: string): Promise<{
     agentName: string | null;
+    /** #1307 — true when a live attributed process backs this pane.
+     *  Missing or non-boolean parses to false, so an older daemon
+     *  without the field still lets the resume path's slug check run. */
+    agentVerified: boolean;
     agentStatus: AgentStatus;
     inputQuiet: boolean;
     inputRevision: number;
@@ -583,6 +587,7 @@ export class DaemonClient extends EventEmitter {
     try {
       const result = await this.rpc('daemon.getAgentState', { id: sessionId }) as {
         agentName?: unknown;
+        agentVerified?: unknown;
         agentStatus?: unknown;
         inputQuiet?: unknown;
         inputRevision?: unknown;
@@ -610,6 +615,7 @@ export class DaemonClient extends EventEmitter {
         agentName: typeof result.agentName === 'string' && result.agentName
           ? result.agentName
           : null,
+        agentVerified: result.agentVerified === true,
         agentStatus: result.agentStatus as AgentStatus,
         inputQuiet: result.inputQuiet,
         inputRevision: result.inputRevision,

@@ -123,6 +123,16 @@ export function detectorSuppressedBy(
   return canonical !== undefined && canonical.source !== 'screen' && canonical.slug !== screenSlug;
 }
 
+/** #1307 — true only when the tracked process is alive and of the
+ *  expected slug, the one tier with a death edge; hook and screen
+ *  carry none, so neither can stand in for this check. */
+export function provesLiveAgent(
+  proc: CanonicalProcessState | undefined,
+  expectedSlug: AgentSlug,
+): boolean {
+  return proc?.alive === true && proc.slug === expectedSlug;
+}
+
 /**
  * #1303 — the agent name readDaemonAgentState reports for a pane, decided
  * from canonical identity rather than the detector's sticky screen read.

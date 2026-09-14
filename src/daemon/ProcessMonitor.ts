@@ -60,6 +60,26 @@ export class ProcessMonitor {
   }
 
   /**
+   * #1307 — POSIX only (win32 has no such states and always returns true).
+   * False for stopped (T/t: SIGSTOP, Ctrl+Z, a debugger) or zombie (Z: exited,
+   * not yet reaped) — both still answer isAlive's kill(pid, 0) as alive.
+   */
+  static async isRunning(pid: number): Promise<boolean> {
+    if (process.platform === 'win32') return true;
+    try {
+      const { stdout } = await execFileAsync(
+        'ps',
+        ['-o', 'stat=', '-p', String(pid)],
+        { encoding: 'utf-8', timeout: 3000 },
+      );
+      const state = (stdout as string).trim()[0];
+      return state !== undefined && state !== 'T' && state !== 't' && state !== 'Z';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Positively confirm a PID is dead. Returns true ONLY when the liveness
    * probe SUCCEEDS and reports the PID absent. THROWS when the probe itself
    * fails (tasklist timeout/error) so the caller can tell "confirmed dead"

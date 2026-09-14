@@ -338,4 +338,66 @@ describe('AgentProcessTracker', () => {
     first?.onDead();
     expect(tracker.statusFor('s1')).toBe(true);
   });
+
+  it('verifyLive passes only while a fresh table still picks the tracked pid and slug', async () => {
+    const watcher = makeWatcher();
+    let table = [entry(200, SHELL, 'claude.exe')];
+    const tracker = new AgentProcessTracker(watcher, async () => table);
+
+    expect(await tracker.verifyLive('s1', 'claude')).toBe(false); // never armed
+    tracker.arm('s1', SHELL);
+    await flush();
+    expect(await tracker.verifyLive('s1', 'claude')).toBe(true);
+    expect(await tracker.verifyLive('s1', 'codex')).toBe(false);
+
+    table = [entry(200, 999, 'claude.exe')]; // same pid, no longer under the pane shell
+    expect(await tracker.verifyLive('s1', 'claude')).toBe(false);
+
+    table = [entry(200, SHELL, 'claude.exe')];
+    watcher.watches.get('agent:s1')?.onDead();
+    expect(await tracker.verifyLive('s1', 'claude')).toBe(false);
+  });
+
+  it('verifyLive fails when the tracked pid now runs a different program — the #1307 regression guard', async () => {
+    const watcher = makeWatcher();
+    let table = [entry(200, SHELL, 'claude.exe')];
+    const tracker = new AgentProcessTracker(watcher, async () => table);
+    tracker.arm('s1', SHELL);
+    await flush();
+
+    table = [entry(200, SHELL, 'bash')]; // pid reused before the death poll
+    expect(tracker.statusFor('s1')).toBe(true);
+    expect(await tracker.verifyLive('s1', 'claude')).toBe(false);
+  });
+
+  it('verifyLive fails when the agent dies while the table is being read', async () => {
+    const watcher = makeWatcher();
+    let release: ((table: ProcessTreeEntry[]) => void) | undefined;
+    let gated = false;
+    const tracker = new AgentProcessTracker(watcher, () => (gated
+      ? new Promise<ProcessTreeEntry[]>((resolve) => { release = resolve; })
+      : Promise.resolve(TABLE)));
+    tracker.arm('s1', SHELL);
+    await flush();
+
+    gated = true;
+    const verdict = tracker.verifyLive('s1', 'claude');
+    watcher.watches.get('agent:s1')?.onDead();
+    release?.(TABLE);
+    expect(await verdict).toBe(false);
+  });
+
+  it('verifyLive fails closed when enumeration throws', async () => {
+    const watcher = makeWatcher();
+    let fail = false;
+    const tracker = new AgentProcessTracker(watcher, async () => {
+      if (fail) throw new Error('ps timed out');
+      return TABLE;
+    });
+    tracker.arm('s1', SHELL);
+    await flush();
+
+    fail = true;
+    expect(await tracker.verifyLive('s1', 'claude')).toBe(false);
+  });
 });

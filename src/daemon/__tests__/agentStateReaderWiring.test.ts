@@ -34,7 +34,7 @@ describe('readDaemonAgentState wiring (#1303)', () => {
     // The only exit before canonical identity is the missing-session guard.
     const between = body.slice(rawIdx, canonicalIdx);
     expect(between.match(/\breturn\b/g)).toHaveLength(1);
-    expect(between).toMatch(/if \(!session\) return \{ agentName: null, \.\.\.state \};/);
+    expect(between).toMatch(/if \(!session\) return \{ agentName: null, agentVerified: false, \.\.\.state \};/);
   });
 
   it('derives the screen slug only from a detector name', () => {
@@ -43,7 +43,7 @@ describe('readDaemonAgentState wiring (#1303)', () => {
 
   it('reports the name through reportedAgentName with the canonical answer', () => {
     expect(readerBody()).toMatch(
-      /return \{ agentName: reportedAgentName\(\{ rawName, screenSlug, canonical \}\), \.\.\.state \};/,
+      /return \{\s*agentName: reportedAgentName\(\{ rawName, screenSlug, canonical \}\),\s*agentVerified,\s*\.\.\.state,?\s*\};/,
     );
   });
 
@@ -55,5 +55,43 @@ describe('readDaemonAgentState wiring (#1303)', () => {
       expect(at).toBeGreaterThan(-1);
       expect(src.slice(at, src.indexOf('});', at))).toMatch(/return readDaemonAgentState\(id\);/);
     }
+  });
+
+  // #1307 — scheduled delivery must require agentVerified and re-check the
+  // pane's agent process before each write.
+  it('computes agentVerified from provesLiveAgent and the promptLog veto', () => {
+    const body = readerBody();
+    const canonicalIdx = body.indexOf('canonicalIdentityFor(agentProcessTracker, id, screenSlug)');
+    const provesIdx = body.indexOf('provesLiveAgent(agentProcessTracker.identityFor(id), canonical.slug)');
+    expect(provesIdx).toBeGreaterThan(canonicalIdx);
+    expect(body).toMatch(
+      /session\.promptLog\.size > 0 && !session\.promptLog\.isCommandRunning\(\)/,
+    );
+    expect(body).toMatch(/const agentVerified =/);
+  });
+
+  function promptV2Body(): string {
+    const at = src.indexOf("pipeServer.onRpc('daemon.deliverScheduledPromptV2'");
+    if (at < 0) throw new Error('daemon.deliverScheduledPromptV2 handler not found');
+    const end = src.indexOf('\n  });', at);
+    return src.slice(at, end > 0 ? end : src.length);
+  }
+
+  it('requires agentVerified before treating the pane as a live agent', () => {
+    const body = promptV2Body();
+    expect(body).toMatch(/slug && current\.agentVerified/);
+  });
+
+  it('wires a fresh pid-liveness dependency after getAgentState and before write', () => {
+    const body = promptV2Body();
+    const getAgentStateIdx = body.indexOf('getAgentState:');
+    const livenessIdx = body.indexOf('isAgentProcessAlive:');
+    const writeIdx = body.indexOf('write:');
+    expect(getAgentStateIdx).toBeGreaterThan(-1);
+    expect(livenessIdx).toBeGreaterThan(getAgentStateIdx);
+    expect(writeIdx).toBeGreaterThan(livenessIdx);
+    expect(body).toMatch(/agentProcessTracker\.pidFor\(id\)/);
+    expect(body).toMatch(/agentProcessTracker\.verifyLive\(id, agentSlug\)/);
+    expect(body).toMatch(/ProcessMonitor\.isRunning\(pid\)/);
   });
 });

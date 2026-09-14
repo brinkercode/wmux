@@ -539,6 +539,31 @@ export class AgentProcessTracker {
     return { ...(s.slug ? { slug: s.slug } : {}), alive: s.alive };
   }
 
+  /** #1307 — the attributed process's pid, for a delivery-time liveness
+   *  probe fresher than the cached `alive` flag (a death between
+   *  ProcessMonitor polls). undefined = never attributed. */
+  pidFor(sessionId: string): number | undefined {
+    return this.states.get(sessionId)?.pid;
+  }
+
+  /** #1307 — re-picks from a fresh process table: true only while the
+   *  tracked pid is still the pane shell's agent descendant with the
+   *  expected slug, so a reused pid fails. Enumerates, unlike identityFor. */
+  async verifyLive(sessionId: string, expectedSlug: AgentSlug): Promise<boolean> {
+    const s = this.states.get(sessionId);
+    const shellPid = this.shellPids.get(sessionId);
+    if (!s?.alive || shellPid === undefined) return false;
+    try {
+      const pick = selectAgentProcess(await this.snapshot(), shellPid);
+      // The death edge, disarm or a re-arm can land while the table is read.
+      return this.states.get(sessionId) === s && s.alive &&
+        this.shellPids.get(sessionId) === shellPid &&
+        pick?.pid === s.pid && pick.slug === expectedSlug;
+    } catch {
+      return false;
+    }
+  }
+
   /** Drop all tracking for a session (died / interrupted / killed). */
   disarm(sessionId: string): void {
     this.generation.set(sessionId, (this.generation.get(sessionId) ?? 0) + 1);

@@ -4,6 +4,7 @@ import {
   resolveCanonicalAgentIdentity,
   detectorSuppressedBy,
   reportedAgentName,
+  provesLiveAgent,
 } from '../canonicalAgent';
 import type { AgentSlug } from '../../shared/agentIdentity';
 
@@ -204,5 +205,27 @@ describe('reportedAgentName (#1303 no-banner sessions)', () => {
         canonical: { slug: 'codex', source: 'process' },
       }),
     ).toBe('Codex CLI');
+  });
+});
+
+describe('provesLiveAgent (#1307 scheduled-prompt delivery proof)', () => {
+  it('passes for a live tracked process whose slug matches the expected agent', () => {
+    expect(provesLiveAgent({ slug: 'codex', alive: true }, 'codex')).toBe(true);
+  });
+
+  it('fails with no tracked process — a hook or screen name alone is not proof', () => {
+    expect(provesLiveAgent(undefined, 'codex')).toBe(false);
+  });
+
+  it('fails a dead tracked process, even of the expected slug', () => {
+    expect(provesLiveAgent({ slug: 'codex', alive: false }, 'codex')).toBe(false);
+  });
+
+  it('fails a live tracked process of a different slug', () => {
+    expect(provesLiveAgent({ slug: 'claude', alive: true }, 'codex')).toBe(false);
+  });
+
+  it('fails a live slugless tracked pick — liveness without a name proves nothing', () => {
+    expect(provesLiveAgent({ alive: true }, 'codex')).toBe(false);
   });
 });

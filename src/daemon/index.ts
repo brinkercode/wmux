@@ -50,7 +50,7 @@ import { WorkTaskService } from './worktask/WorkTaskService';
 import { isTaskState, type AgentStatus, type Message } from '../shared/types';
 import { ProcessMonitor } from './ProcessMonitor';
 import { AgentProcessTracker } from './AgentProcessTracker';
-import { resolveCanonicalAgentIdentity, detectorSuppressedBy, reportedAgentName, type CanonicalAgentIdentity } from './canonicalAgent';
+import { resolveCanonicalAgentIdentity, detectorSuppressedBy, reportedAgentName, provesLiveAgent, type CanonicalAgentIdentity } from './canonicalAgent';
 import { Watchdog } from './Watchdog';
 import { selectRecoverableSessions } from './recoverySelector';
 import { isShutdownKillExit, SHUTDOWN_KILL_RECLASSIFY_MS } from './shutdownKill';
@@ -3281,6 +3281,7 @@ function registerRpcHandlers(
 
   const readDaemonAgentState = (id: string): {
     agentName: string | null;
+    agentVerified: boolean;
     agentStatus: AgentStatus;
     inputQuiet: boolean;
     inputRevision: number;
@@ -3300,12 +3301,24 @@ function registerRpcHandlers(
     const rawName = session?.bridge.getLastAgent();
     const incarnationId = session?.meta.incarnationId ?? null;
     const state = { agentStatus, inputQuiet, inputRevision, incarnationId };
-    if (!session) return { agentName: null, ...state };
+    if (!session) return { agentName: null, agentVerified: false, ...state };
     // #1303 — no detector name does not mean no agent: a resumed or named
     // session draws no banner, but the hook/process tiers may still know it.
     const screenSlug = rawName ? agentDisplayToSlug(rawName) : undefined;
     const canonical = canonicalIdentityFor(agentProcessTracker, id, screenSlug);
-    return { agentName: reportedAgentName({ rawName, screenSlug, canonical }), ...state };
+    // #1307 — agentVerified proves a live process (see provesLiveAgent),
+    // stricter than the display name: hook/screen naming has no death
+    // edge, and an OSC 133 prompt means the foreground command returned.
+    const shellAtPrompt = session.promptLog.size > 0 && !session.promptLog.isCommandRunning();
+    const agentVerified =
+      !!canonical &&
+      provesLiveAgent(agentProcessTracker.identityFor(id), canonical.slug) &&
+      !shellAtPrompt;
+    return {
+      agentName: reportedAgentName({ rawName, screenSlug, canonical }),
+      agentVerified,
+      ...state,
+    };
   };
   // #1163 — /api/workspaces answers with this same canonical state, so a
   // remote roster row appears and disappears exactly when a local one would.
@@ -3338,13 +3351,28 @@ function registerRpcHandlers(
       getAgentState: () => {
         const current = readDaemonAgentState(id);
         const slug = current.agentName ? agentDisplayToSlug(current.agentName) : undefined;
-        return slug ? {
+        // #1307 — an unverified pane (hook/screen-only, or a shell at rest
+        // past exit) reports as no agent here, refusing delivery the same
+        // way a stale-agent or missing-session snapshot already does.
+        return slug && current.agentVerified ? {
           slug,
           incarnationId: current.incarnationId,
           status: current.agentStatus,
           inputQuiet: current.inputQuiet,
           inputRevision: current.inputRevision,
         } : null;
+      },
+      isAgentProcessAlive: async () => {
+        const pid = agentProcessTracker.pidFor(id);
+        if (pid === undefined) return false;
+        try {
+          // #1307 — a reused pid is no longer the pane's agent descendant, and
+          // a stopped (Ctrl+Z) or zombie agent is not running.
+          return await agentProcessTracker.verifyLive(id, agentSlug) &&
+            await ProcessMonitor.isRunning(pid);
+        } catch {
+          return false;
+        }
       },
       write: (data) => {
         const managed = sessionManager.getSession(id);

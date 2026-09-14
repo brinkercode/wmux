@@ -755,7 +755,9 @@ export function registerPTYHandlers(
     if (!useDaemon || !daemonClient) return null;
     const agent = await daemonClient.getAgentState(ptyId);
     const slug = agent?.agentName ? agentDisplayToSlug(agent.agentName) : undefined;
-    return agent && slug ? { slug, incarnationId: agent.incarnationId } : null;
+    return agent && slug
+      ? { slug, incarnationId: agent.incarnationId, agentVerified: agent.agentVerified }
+      : null;
   };
 
   const sessionPromptScheduler = new SessionPromptScheduler({

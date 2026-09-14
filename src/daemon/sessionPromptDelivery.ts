@@ -20,6 +20,10 @@ export interface ScheduledPromptAgentState {
 
 export interface ScheduledPromptDeliveryDeps {
   getAgentState: () => ScheduledPromptAgentState | null;
+  /** #1307 — a fresh liveness read of the tracked process, called
+   *  before the paste and again before Enter; getAgentState's
+   *  snapshot can lag the process table by a poll (~15-28s). */
+  isAgentProcessAlive: () => Promise<boolean>;
   /** Returns false if the session disappeared before this write. */
   write: (data: string) => boolean;
   delay?: (ms: number) => Promise<void>;
@@ -57,6 +61,14 @@ export async function deliverScheduledPrompt(
   if (before.incarnationId !== expectedIncarnationId) return 'session_changed';
   if (!isReady(before.status) || !before.inputQuiet) return 'busy';
 
+  // A fresh read of the tracked pid, closing the gap between
+  // getAgentState's snapshot above and the current process table.
+  try {
+    if (!(await deps.isAgentProcessAlive())) return 'unavailable';
+  } catch {
+    return 'unavailable';
+  }
+
   try {
     if (!deps.write(formatBracketedPastePayload(prompt))) return 'unavailable';
   } catch {
@@ -64,6 +76,15 @@ export async function deliverScheduledPrompt(
   }
 
   await (deps.delay ?? sleep)(SESSION_PROMPT_SUBMIT_DELAY_MS);
+  // #1307 — the agent can exit inside the submit delay, leaving the paste in
+  // the shell's input line. Checked before the state re-read, so the input
+  // revision check stays the last thing before Enter.
+  try {
+    if (!(await deps.isAgentProcessAlive())) return 'error';
+  } catch {
+    return 'error';
+  }
+
   const after = deps.getAgentState();
   if (
     !after ||

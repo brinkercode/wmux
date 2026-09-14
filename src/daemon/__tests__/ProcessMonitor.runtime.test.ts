@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { spawn } from 'node:child_process';
 import { ProcessMonitor } from '../ProcessMonitor';
 
 let monitor: ProcessMonitor;
@@ -18,6 +19,67 @@ describe('ProcessMonitor', () => {
     // PID 99999999 is extremely unlikely to exist
     expect(await ProcessMonitor.isAlive(99999999)).toBe(false);
   });
+
+  it('isRunning returns true for current process PID', async () => {
+    expect(await ProcessMonitor.isRunning(process.pid)).toBe(true);
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'isRunning returns false for a non-existent PID',
+    async () => {
+      expect(await ProcessMonitor.isRunning(99999999)).toBe(false);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'isRunning returns false for a zombie process — the #1307 regression guard',
+    async () => {
+      // perl forks; the child exits and the never-waiting parent sleeps,
+      // so it stays a zombie (STAT 'Z', still visible to kill(pid, 0))
+      // until we kill the parent below (Node only reaps its own children).
+      const parent = spawn('perl', [
+        '-e',
+        '$|=1; my $p=fork(); if($p==0){exit 0} else {print "$p\\n"; sleep 5}',
+      ]);
+      try {
+        const zombiePid = await new Promise<number>((resolve, reject) => {
+          let buf = '';
+          parent.stdout?.on('data', (chunk: Buffer) => {
+            buf += chunk.toString();
+            const match = buf.match(/(\d+)/);
+            if (match) resolve(parseInt(match[1], 10));
+          });
+          parent.once('error', reject);
+        });
+        await vi.waitFor(async () => {
+          expect(await ProcessMonitor.isRunning(zombiePid)).toBe(false);
+        }, { timeout: 2000 });
+        expect(await ProcessMonitor.isAlive(zombiePid)).toBe(true);
+      } finally {
+        parent.kill('SIGKILL');
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'isRunning returns false for a SIGSTOPped process that isAlive still reports true — the #1307 regression guard',
+    async () => {
+      const child = spawn('sleep', ['30']);
+      const pid = child.pid;
+      if (pid === undefined) throw new Error('sleep did not spawn');
+      try {
+        process.kill(pid, 'SIGSTOP');
+        // Give the kernel a moment to land the state transition.
+        await vi.waitFor(async () => {
+          expect(await ProcessMonitor.isRunning(pid)).toBe(false);
+        }, { timeout: 2000 });
+        expect(await ProcessMonitor.isAlive(pid)).toBe(true);
+      } finally {
+        process.kill(pid, 'SIGCONT');
+        child.kill('SIGKILL');
+      }
+    },
+  );
 
   it('watch calls onDead when process does not exist', async () => {
     monitor = new ProcessMonitor();
