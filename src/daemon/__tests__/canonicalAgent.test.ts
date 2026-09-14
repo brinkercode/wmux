@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { IDENTITY_TTL_MS, resolveCanonicalAgentIdentity, detectorSuppressedBy } from '../canonicalAgent';
+import {
+  IDENTITY_TTL_MS,
+  resolveCanonicalAgentIdentity,
+  detectorSuppressedBy,
+  reportedAgentName,
+} from '../canonicalAgent';
 import type { AgentSlug } from '../../shared/agentIdentity';
 
 const proc = (slug: AgentSlug | undefined, alive: boolean) =>
@@ -149,5 +154,55 @@ describe('detectorSuppressedBy (#919 detector veto)', () => {
     // updates over a name we merely failed to read.
     expect(detectorSuppressedBy({ slug: 'codex', source: 'process' }, undefined)).toBe(false);
     expect(detectorSuppressedBy({ slug: 'codex', source: 'hook' }, undefined)).toBe(false);
+  });
+});
+
+describe('reportedAgentName (#1303 no-banner sessions)', () => {
+  it('a fresh exact-routed hook names a pane the detector never named — the #1303 regression guard', () => {
+    expect(
+      reportedAgentName({
+        rawName: undefined,
+        screenSlug: undefined,
+        canonical: resolveCanonicalAgentIdentity({ auth: auth('claude', 30_000) }),
+      }),
+    ).toBe('Claude Code');
+  });
+
+  it('a live tracked process names a pane the detector never named', () => {
+    expect(
+      reportedAgentName({
+        rawName: undefined,
+        screenSlug: undefined,
+        canonical: resolveCanonicalAgentIdentity({ proc: proc('claude', true) }),
+      }),
+    ).toBe('Claude Code');
+  });
+
+  it('no detector name and no canonical identity → null', () => {
+    expect(
+      reportedAgentName({ rawName: undefined, screenSlug: undefined, canonical: undefined }),
+    ).toBeNull();
+  });
+
+  it('residue veto survives: a mappable screen read with no canonical identity is not an agent', () => {
+    expect(
+      reportedAgentName({ rawName: 'Claude Code', screenSlug: 'claude', canonical: undefined }),
+    ).toBeNull();
+  });
+
+  it('a display name this build cannot map is reported raw', () => {
+    expect(
+      reportedAgentName({ rawName: 'Some New Tool', screenSlug: undefined, canonical: undefined }),
+    ).toBe('Some New Tool');
+  });
+
+  it('a live different-slug process beats the detector name', () => {
+    expect(
+      reportedAgentName({
+        rawName: 'Claude Code',
+        screenSlug: 'claude',
+        canonical: { slug: 'codex', source: 'process' },
+      }),
+    ).toBe('Codex CLI');
   });
 });

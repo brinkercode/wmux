@@ -18,7 +18,7 @@
 // Pure on purpose: no tracker/router imports, no clock, no I/O — the daemon
 // reads its two maps and passes snapshots in, so every tier combination is
 // unit-testable without a process table.
-import type { AgentSlug } from '../shared/agentIdentity';
+import { agentSlugToDisplay, type AgentSlug } from '../shared/agentIdentity';
 
 /**
  * How long an UNCORROBORATED hook authority may decide identity on its own.
@@ -121,4 +121,27 @@ export function detectorSuppressedBy(
 ): boolean {
   if (screenSlug === undefined) return false;
   return canonical !== undefined && canonical.source !== 'screen' && canonical.slug !== screenSlug;
+}
+
+/**
+ * #1303 — the agent name readDaemonAgentState reports for a pane, decided
+ * from canonical identity rather than the detector's sticky screen read.
+ *
+ * An ABSENT detector name is not "no agent". A resumed or named Claude session
+ * titles the terminal with the session name and draws no banner, so the
+ * detector never names it while the hook and process tiers already know the
+ * agent. The caller resolves `canonical` with `screenSlug` included; this only
+ * picks the label.
+ */
+export function reportedAgentName(inputs: {
+  rawName?: string | null;
+  screenSlug?: AgentSlug;
+  canonical?: CanonicalAgentIdentity;
+}): string | null {
+  const { rawName, screenSlug, canonical } = inputs;
+  if (canonical) return agentSlugToDisplay(canonical.slug);
+  // #919 residue veto: a mappable screen slug with no canonical backing is
+  // sticky detector residue, not a live agent.
+  if (!rawName || screenSlug) return null;
+  return rawName;
 }

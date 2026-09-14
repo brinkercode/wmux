@@ -49,7 +49,7 @@ import { WorkTaskService } from './worktask/WorkTaskService';
 import { isTaskState, type AgentStatus, type Message } from '../shared/types';
 import { ProcessMonitor } from './ProcessMonitor';
 import { AgentProcessTracker } from './AgentProcessTracker';
-import { resolveCanonicalAgentIdentity, detectorSuppressedBy, type CanonicalAgentIdentity } from './canonicalAgent';
+import { resolveCanonicalAgentIdentity, detectorSuppressedBy, reportedAgentName, type CanonicalAgentIdentity } from './canonicalAgent';
 import { Watchdog } from './Watchdog';
 import { selectRecoverableSessions } from './recoverySelector';
 import { isShutdownKillExit, SHUTDOWN_KILL_RECLASSIFY_MS } from './shutdownKill';
@@ -3228,12 +3228,12 @@ function registerRpcHandlers(
     const rawName = session?.bridge.getLastAgent();
     const incarnationId = session?.meta.incarnationId ?? null;
     const state = { agentStatus, inputQuiet, inputRevision, incarnationId };
-    if (!session || !rawName) return { agentName: rawName ?? null, ...state };
-    const screenSlug = agentDisplayToSlug(rawName);
+    if (!session) return { agentName: null, ...state };
+    // #1303 — no detector name does not mean no agent: a resumed or named
+    // session draws no banner, but the hook/process tiers may still know it.
+    const screenSlug = rawName ? agentDisplayToSlug(rawName) : undefined;
     const canonical = canonicalIdentityFor(agentProcessTracker, id, screenSlug);
-    if (canonical) return { agentName: agentSlugToDisplay(canonical.slug), ...state };
-    if (screenSlug) return { agentName: null, ...state };
-    return { agentName: rawName, ...state };
+    return { agentName: reportedAgentName({ rawName, screenSlug, canonical }), ...state };
   };
   // #1163 — /api/workspaces answers with this same canonical state, so a
   // remote roster row appears and disappears exactly when a local one would.
