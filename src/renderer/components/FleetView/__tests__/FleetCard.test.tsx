@@ -228,3 +228,22 @@ describe('FleetCard — NB3 completion-evidence badge', () => {
     expect(render({ card: card() })).not.toContain('data-fleet-evidence');
   });
 });
+
+// ─── #1343 — a mirrored agent has to say which host it is on ──────────────────
+describe('FleetCard — remote host origin (#1343)', () => {
+  it('marks a remote row with @host, same grammar as the sidebar roster', () => {
+    const html = render({
+      card: card({
+        surfaceType: 'remote-terminal',
+        ptyId: 'remote:host-1:sess-1',
+        remote: { hostId: 'host-1', hostLabel: 'office-mac' },
+      }),
+    });
+    expect(html).toContain('data-fleet-remote-host="host-1"');
+    expect(html).toContain('@office-mac');
+  });
+
+  it('leaves a local row alone', () => {
+    expect(render({ card: card() })).not.toContain('data-fleet-remote-host');
+  });
+});

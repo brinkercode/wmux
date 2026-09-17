@@ -213,6 +213,11 @@ export function buildFleetSnapshots(state: FleetSnapshotState, ts: number): Flee
     for (const leaf of getWorkspaceLeafPanes(ws)) {
       const derived = derivedByPane.get(leaf.id);
       if (!derived) continue; // selectFleetPanes emits every leaf → always present
+      // #1343 — a remote row's ptyId is the synthetic remoteAgentKey and no
+      // local pty answers it. This payload is an ACTUATION surface ("pane=
+      // <ptyId> state=… verify then press"), so remote agents stay out of it;
+      // the cockpit rosters are where they belong.
+      if (derived.surfaceType === 'remote-terminal') continue;
       let snap = byWs.get(ws.id);
       if (!snap) {
         snap = { workspaceId: ws.id, ts, panes: [] };

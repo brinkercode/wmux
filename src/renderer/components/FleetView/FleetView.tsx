@@ -58,6 +58,9 @@ export default function FleetView() {
   // X8 supervision mirror — subscribed here so the selector re-runs when a
   // supervised pane arms/stops or its restart count changes.
   const supervisionByPtyId = useStore((s) => s.supervisionByPtyId);
+  // #1343 — attached remote-host mirrors, so a remote-terminal pane's row
+  // (and its agent status flips) reach the cockpit grid too.
+  const remoteWorkspaces = useStore((s) => s.remoteWorkspaces);
 
   // S-C2: tab lives in uiSlice (not FleetView-local) so the A2A / MCP approval
   // modals can suppress themselves while the inbox tab is open (AppLayout delta
@@ -90,8 +93,8 @@ export default function FleetView() {
   // trees or the per-pty attention map change (the two inputs the selector
   // reads), not on every unrelated store mutation.
   const panes = useMemo(
-    () => sortFleetPanes(selectFleetPanes({ workspaces, surfaceAgentStatus, surfaceActivity, paneLabel, supervisionByPtyId, surfaceAgent, surfacePendingQuestion }), fleetSortMode),
-    [workspaces, surfaceAgentStatus, surfaceActivity, paneLabel, supervisionByPtyId, surfaceAgent, surfacePendingQuestion, fleetSortMode],
+    () => sortFleetPanes(selectFleetPanes({ workspaces, surfaceAgentStatus, surfaceActivity, paneLabel, supervisionByPtyId, surfaceAgent, surfacePendingQuestion, remoteWorkspaces }), fleetSortMode),
+    [workspaces, surfaceAgentStatus, surfaceActivity, paneLabel, supervisionByPtyId, surfaceAgent, surfacePendingQuestion, remoteWorkspaces, fleetSortMode],
   );
   const needsCount = useMemo(() => countNeedsAttention(panes), [panes]);
   // Stable identity key of the terminal ptyIds to poll for RAM. `panes`
@@ -226,9 +229,13 @@ export default function FleetView() {
   // showing awaiting_input until the agent actually resumes. Browser/editor/
   // unspawned surfaces have no ptyId (and no ring), so they activate the
   // workspace+pane+surface directly via the shared activation core.
+  // #1343 — a remote-terminal card's ptyId is the synthetic remoteAgentKey, not
+  // a real PTY id; no local surface ever carries it, so the ptyId branch below
+  // must not claim it. It falls through to the surfaceId branch instead, same
+  // as browser/editor/unspawned surfaces.
   const jump = useCallback((card: FleetPane) => {
     const getState = () => useStore.getState();
-    if (card.ptyId) {
+    if (card.ptyId && card.surfaceType !== 'remote-terminal') {
       // focusPaneByPtyId unstashes on the way (#977).
       focusPaneByPtyId(getState, card.ptyId);
     } else if (card.surfaceId) {

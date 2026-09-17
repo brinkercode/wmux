@@ -446,3 +446,35 @@ describe('buildFleetSnapshots — pending question (#1168)', () => {
     expect(fleet.panes[0]).toMatchObject({ ptyId: 'pty-1', agentStatus: 'complete' });
   });
 });
+
+// ─── #1343 — a remote agent is a cockpit row, never a mirror row ──────────────
+//
+// selectFleetPanes now resolves remote-terminal panes (the #1163 host mirror),
+// keyed by the synthetic remoteAgentKey. This payload is what the brain
+// actuates off, and no local pty answers that key.
+describe('buildFleetSnapshots — remote-terminal panes (#1343)', () => {
+  const remoteWs = workspace(
+    'ws-r', 'remote',
+    leaf('p-r', [surface('s-r', '', {
+      surfaceType: 'remote-terminal', remoteHostId: 'host-1', remoteSessionId: 'sess-1',
+    })]),
+    'p-r',
+  );
+
+  it('keeps a live remote agent out of the snapshot the deck actuates on', () => {
+    const st = {
+      workspaces: [remoteWs],
+      surfaceAgentStatus: {},
+      surfaceActivity: {},
+      remoteWorkspaces: [{
+        key: 'host-1:rws', hostId: 'host-1', hostLabel: 'office-mac', workspaceId: 'rws',
+        name: 'remote-ws', stale: false,
+        panes: [{ sessionId: 'sess-1', agentName: 'Claude Code', agentStatus: 'waiting' as AgentStatus }],
+      }],
+    } as unknown as FleetSnapshotState;
+    const ptys = buildFleetSnapshots(st, 1).flatMap((f) => f.panes.map((p) => p.ptyId));
+    // Emitting it would tell the brain to press Enter on `remote:host-1:sess-1`.
+    expect(ptys).not.toContain('remote:host-1:sess-1');
+    expect(ptys).toEqual([]);
+  });
+});

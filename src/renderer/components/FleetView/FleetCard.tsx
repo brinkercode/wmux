@@ -216,6 +216,17 @@ function FleetCard({ card, focused, onJump, tail, resource }: FleetCardProps) {
       {/* Context line: workspace · cwd */}
       <div className="flex items-center gap-1.5 min-w-0 text-caption font-mono text-[var(--text-muted)]">
         <span className="truncate max-w-[48%]" title={card.workspaceName}>{card.workspaceName}</span>
+        {/* #1343 — a remote row's "where" is the host, in the same `@host`
+            grammar the sidebar roster uses (rosterSecondaryLabel). Without it
+            a mirrored agent is indistinguishable from a local one. */}
+        {card.remote && (
+          <>
+            <span className="opacity-50">·</span>
+            <span className="flex-shrink-0" data-fleet-remote-host={card.remote.hostId}>
+              @{card.remote.hostLabel}
+            </span>
+          </>
+        )}
         {card.cwd && (
           <>
             <span className="opacity-50">·</span>

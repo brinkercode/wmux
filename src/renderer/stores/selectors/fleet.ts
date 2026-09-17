@@ -2,6 +2,7 @@ import type { AgentStatus, Task, PaneLeaf, Surface } from '../../../shared/types
 import { getLeafPanes, getWorkspaceLeafPanes } from '../../../shared/paneUtils';
 import { stashedPaneLiveness } from '../../../shared/paneStash';
 import { isBrainPtyId } from '../../../shared/constants';
+import { remoteAgentKey } from '../../../shared/remoteHosts';
 import type { StoreState } from '../index';
 
 // ─── S-C1 Fleet View — derived "all agents, all workspaces" model ────────────
@@ -70,6 +71,12 @@ export interface FleetPane {
   /** Milliseconds since this pane's last activity stamp. Only set when
    *  `unverifiable` — it is that state's evidence, and its label. */
   staleForMs?: number;
+  /**
+   * #1343 — this row is a remote-terminal surface (#1163 host mirror), same
+   * shape and purpose as WorkspaceAgentRosterRow's field. `ptyId` is then the
+   * synthetic `remoteAgentKey`, never a local ptyId.
+   */
+  remote?: { hostId: string; hostLabel: string };
 }
 
 /** Minimal store surface the selector reads — keeps the fixture trivial and the
@@ -109,6 +116,12 @@ export type FleetSelectorState = Pick<StoreState, 'workspaces' | 'surfaceAgentSt
    *  `surfaceActivityAt`, which is evidence and decays at HOOK_RUNNING_TTL_MS.
    *  Optional so existing fixtures stay terse. */
   surfaceTurnOpenAt?: StoreState['surfaceTurnOpenAt'];
+  /**
+   * #1343 — attached remote-host mirrors, for the same #1163 remote row
+   * workspaceAgentRoster.ts reads. Optional so existing fixtures stay terse;
+   * the live store always provides it.
+   */
+  remoteWorkspaces?: StoreState['remoteWorkspaces'];
   /**
    * PRECOMPUTED hook-'running' verdicts, ptyId → true. Supplied instead of
    * `agentClockMs` by a consumer that must not re-run on every clock tick: the
@@ -368,6 +381,38 @@ export function selectFleetPanes(state: FleetSelectorState): FleetPane[] {
         ? pickStashedRepresentativeSurface(leaf, state.surfaceAgent ?? {})
         : leaf.surfaces.find((s) => s.id === leaf.activeSurfaceId) ?? leaf.surfaces[0];
       const ptyId = surf?.ptyId ?? '';
+      // #1343 — a remote-terminal surface has ptyId '' by contract, so no local
+      // PTY-keyed map resolves it. Mirror the roster's #1163 remote branch (same
+      // host lookup, same "no live metadata, no row" rule) before any local lookup.
+      if ((surf?.surfaceType ?? 'terminal') === 'remote-terminal') {
+        const hostId = surf?.remoteHostId;
+        const sessionId = surf?.remoteSessionId;
+        if (hostId && sessionId) {
+          const attached = (state.remoteWorkspaces ?? []).find(
+            (r) => r.hostId === hostId && !r.stale && r.panes.some((p) => p.sessionId === sessionId),
+          );
+          const pane = attached?.panes.find((p) => p.sessionId === sessionId);
+          if (pane?.agentName) {
+            result.push({
+              workspaceId: ws.id,
+              workspaceName: ws.name,
+              paneId: leaf.id,
+              surfaceId: surf?.id ?? '',
+              ptyId: remoteAgentKey(hostId, sessionId),
+              agentStatus: pane.agentStatus ?? 'idle',
+              agentName: pane.agentName,
+              paneLabel: state.paneLabel?.[leaf.id],
+              cwd: surf?.cwd,
+              title: surf?.title ?? '',
+              surfaceType: 'remote-terminal',
+              isActivePane: ws.activePaneId === leaf.id,
+              remote: { hostId, hostLabel: attached?.hostLabel ?? hostId },
+              unverifiable: false,
+            });
+          }
+        }
+        continue;
+      }
       // The orchestrator's own brain pty is never a fleet member. It should
       // never reach a surface at all (pty.list filters it), so this is the
       // belt to that braces: every roster in the app — DeckFleet, FleetView,

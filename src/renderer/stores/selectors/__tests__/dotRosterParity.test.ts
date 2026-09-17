@@ -53,6 +53,16 @@ interface StateOverrides {
   surfaceActivityAt?: Record<string, number>;
   paneLabel?: Record<string, string>;
   agentClockMs?: number;
+  // #1343 — attached remote-host mirrors, for the remote-only-agent case below.
+  remoteWorkspaces?: {
+    key: string;
+    hostId: string;
+    hostLabel: string;
+    workspaceId: string;
+    name: string;
+    stale?: boolean;
+    panes: { sessionId: string; agentName?: string; agentStatus?: AgentStatus }[];
+  }[];
 }
 
 function state(overrides: StateOverrides = {}): StoreState {
@@ -66,6 +76,7 @@ function state(overrides: StateOverrides = {}): StoreState {
     surfaceActivityAt: {},
     paneLabel: {},
     agentClockMs: NOW,
+    remoteWorkspaces: [],
     ...overrides,
   } as unknown as StoreState;
 }
@@ -222,5 +233,25 @@ describe('#1168 — workspace dot vs. roster', () => {
 
     expect(selectWorkspaceAgentRoster(s, 'ws-1').rows[0]?.status).toBe('idle');
     expect(selectWorkspaceAgentStatus(s, 'ws-1')).toBe('idle');
+  });
+
+  // #1343 — a remote-terminal surface has ptyId '' by contract, so it resolved
+  // no agent in selectFleetPanes and the workspace dot stayed neutral even
+  // though the roster (which has its own #1163 remote branch) already counted
+  // the same agent as needing the user.
+  it('lights the dot for a workspace whose only waiting agent is remote', () => {
+    const s = state({
+      workspaces: [
+        workspace('ws-1', leaf('p1', [surface('s1', '', { surfaceType: 'remote-terminal', remoteHostId: 'host-1', remoteSessionId: 'sess-1' })]), 'p1'),
+      ],
+      remoteWorkspaces: [{
+        key: 'host-1:rws', hostId: 'host-1', hostLabel: 'office-mac', workspaceId: 'rws', name: 'remote-ws',
+        panes: [{ sessionId: 'sess-1', agentName: 'Claude Code', agentStatus: 'waiting' }],
+      }],
+    });
+
+    const rosterRow = selectWorkspaceAgentRoster(s, 'ws-1').rows[0];
+    expect(rosterRow).toMatchObject({ status: 'waiting', needsAttention: true });
+    expectDotCoversRoster(s, 'ws-1');
   });
 });

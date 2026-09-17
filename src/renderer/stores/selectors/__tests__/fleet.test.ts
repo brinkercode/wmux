@@ -868,6 +868,87 @@ describe('pickStashedRepresentativeSurface', () => {
   });
 });
 
+// ─── #1343 — remote-terminal rows in the fleet selector ──────────────────────
+//
+// A remote-terminal surface has ptyId '' by contract and resolves no local
+// PTY-keyed map, so it fell out of every roster this selector feeds. Mirrors
+// workspaceAgentRoster.ts's #1163 remote branch exactly.
+
+describe('selectFleetPanes — remote-terminal rows (#1343)', () => {
+  function remoteSurface(id: string, hostId: string, sessionId: string): Surface {
+    return {
+      id, ptyId: '', title: 'remote', shell: 'bash', cwd: '/home/host',
+      surfaceType: 'remote-terminal', remoteHostId: hostId, remoteSessionId: sessionId,
+    };
+  }
+  function remoteWorkspaceEntry(
+    hostId: string,
+    sessionId: string,
+    over: { stale?: boolean; agentName?: string; agentStatus?: AgentStatus; hostLabel?: string } = {},
+  ) {
+    return {
+      key: `${hostId}:rws`,
+      hostId,
+      hostLabel: over.hostLabel ?? 'office-mac',
+      workspaceId: 'rws',
+      name: 'remote-ws',
+      stale: over.stale ?? false,
+      panes: [{ sessionId, agentName: over.agentName, agentStatus: over.agentStatus }],
+    };
+  }
+
+  it('produces a row for a remote-terminal surface with live host metadata (name, status, badge, synthetic ptyId)', () => {
+    const ws = workspace('ws-r', 'remote', leaf('p-r', [remoteSurface('s-r', 'host-1', 'sess-1')]), 'p-r');
+    const [card] = selectFleetPanes({
+      workspaces: [ws], surfaceAgentStatus: {}, surfaceActivity: {},
+      remoteWorkspaces: [remoteWorkspaceEntry('host-1', 'sess-1', { agentName: 'Claude Code', agentStatus: 'waiting' })],
+    });
+    expect(card.agentName).toBe('Claude Code');
+    expect(card.agentStatus).toBe('waiting');
+    expect(card.remote).toEqual({ hostId: 'host-1', hostLabel: 'office-mac' });
+    expect(card.ptyId).toBe('remote:host-1:sess-1');
+    expect(card.surfaceType).toBe('remote-terminal');
+  });
+
+  it('produces no row for a STALE host entry (a disconnected host must not count as live)', () => {
+    const ws = workspace('ws-r', 'remote', leaf('p-r', [remoteSurface('s-r', 'host-1', 'sess-1')]), 'p-r');
+    const panes = selectFleetPanes({
+      workspaces: [ws], surfaceAgentStatus: {}, surfaceActivity: {},
+      remoteWorkspaces: [remoteWorkspaceEntry('host-1', 'sess-1', { stale: true, agentName: 'Claude Code' })],
+    });
+    expect(panes).toEqual([]);
+  });
+
+  it('produces no row for a pane with no agentName', () => {
+    const ws = workspace('ws-r', 'remote', leaf('p-r', [remoteSurface('s-r', 'host-1', 'sess-1')]), 'p-r');
+    const panes = selectFleetPanes({
+      workspaces: [ws], surfaceAgentStatus: {}, surfaceActivity: {},
+      remoteWorkspaces: [remoteWorkspaceEntry('host-1', 'sess-1')],
+    });
+    expect(panes).toEqual([]);
+  });
+
+  it('leaves a local row unchanged by the remoteWorkspaces input', () => {
+    const withRemote = byPane(selectFleetPanes({ ...fixture(), remoteWorkspaces: [] }), 'p1');
+    const without = byPane(selectFleetPanes(fixture()), 'p1');
+    expect(withRemote).toEqual(without);
+  });
+
+  it("DeckFleet's fleet-terminal filter shape drops a remote-terminal row", () => {
+    // DeckFleet's roster filters on `p.ptyId !== '' && p.surfaceType === 'terminal'`
+    // — a remote row's non-empty synthetic ptyId alone must not slip it through;
+    // `surfaceType` is what excludes it, so the orchestrator's commandable
+    // roster stays local-only.
+    const ws = workspace('ws-r', 'remote', leaf('p-r', [remoteSurface('s-r', 'host-1', 'sess-1')]), 'p-r');
+    const panes = selectFleetPanes({
+      workspaces: [ws], surfaceAgentStatus: {}, surfaceActivity: {},
+      remoteWorkspaces: [remoteWorkspaceEntry('host-1', 'sess-1', { agentName: 'Claude Code', agentStatus: 'idle' })],
+    });
+    const commandable = panes.filter((p) => p.ptyId !== '' && p.surfaceType === 'terminal');
+    expect(commandable).toEqual([]);
+  });
+});
+
 describe('selectFleetPanes — stashed pane representative (#977)', () => {
   it('shows the live sibling agent, not the dead active tab, on a stashed row', () => {
     const stashedLeaf = leaf('p-st', [
